@@ -27,6 +27,53 @@ function fixture(data: Record<string, unknown[]>) {
 }
 
 describe('Driver dashboard assignment isolation', () => {
+  it('resolves an exact order number only for the owning active Driver', async () => {
+    const f = fixture({
+      drivers: [{id: 'driver-own', is_active: true}],
+      orders: [{id: 'order-own', order_number: 'BW-20260921-ABC12345', current_status: 'pickup_assigned'}],
+      driver_assignments: [own],
+    });
+    await expect(f.service.lookupOrder('profile-own', 'bw-20260921-abc12345')).resolves.toMatchObject({
+      assignmentId: 'assignment-own', orderNumber: 'BW-20260921-ABC12345', assignmentStatus: 'assigned',
+    });
+    expect(f.filters).toContainEqual({table: 'driver_assignments', method: 'eq', args: ['driver_id', 'driver-own']});
+  });
+
+  it('resolves a stable QR payload only for the owning active Driver', async () => {
+    const token = '00000000-0000-4000-8000-000000000001';
+    const f = fixture({
+      drivers: [{id: 'driver-own', is_active: true}],
+      order_qr_codes: [{order_id: 'order-own', is_active: true}],
+      orders: [{id: 'order-own', order_number: 'BW-20260921-ABC12345', current_status: 'pickup_assigned'}],
+      driver_assignments: [own],
+    });
+    await expect(f.service.lookupOrder('profile-own', `BW1:${token}`)).resolves.toMatchObject({assignmentId: 'assignment-own'});
+  });
+
+  it('does not expose an unassigned order or another Driver’s assignment', async () => {
+    const unassigned = fixture({
+      drivers: [{id: 'driver-own', is_active: true}],
+      orders: [{id: 'order-own', order_number: 'BW-20260921-ABC12345', current_status: 'confirmed'}],
+      driver_assignments: [null],
+    });
+    await expect(unassigned.service.lookupOrder('profile-own', 'BW-20260921-ABC12345')).rejects.toBeInstanceOf(NotFoundException);
+    const wrong = fixture({
+      drivers: [{id: 'driver-own', is_active: true}],
+      orders: [{id: 'order-own', order_number: 'BW-20260921-ABC12345', current_status: 'pickup_assigned'}],
+      driver_assignments: [null],
+    });
+    await expect(wrong.service.lookupOrder('profile-own', 'BW-20260921-ABC12345')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('rejects cancelled and lifecycle-ineligible assignments', async () => {
+    const f = fixture({
+      drivers: [{id: 'driver-own', is_active: true}],
+      orders: [{id: 'order-own', order_number: 'BW-20260921-ABC12345', current_status: 'cancelled'}],
+      driver_assignments: [own],
+    });
+    await expect(f.service.lookupOrder('profile-own', 'BW-20260921-ABC12345')).rejects.toBeInstanceOf(ConflictException);
+  });
+
   it('returns only this Driver’s jobs and never includes customer contact in queues', async () => {
     const other = {...own, id: 'assignment-other', order_id: 'order-other', driver_id: 'driver-other'};
     const f = fixture({

@@ -21,6 +21,6 @@ test('rejects unrelated QR values', async () => {
 test('replaces native scanner failures with a safe manual-entry fallback', async () => {
   scan.mockRejectedValue(new Error('java.lang.RuntimeException: INTERNAL_ERROR (8)'));
   await expect(scanOrderQr()).rejects.toThrow(
-    'QR scanner is unavailable on this device. Enter the handoff code instead.',
+    'QR scanner is unavailable on this device. Enter the order code instead.',
   );
 });

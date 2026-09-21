@@ -34,14 +34,14 @@ describe('OrderCareSection', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     claims.mockResolvedValue([]);
-    payment.mockResolvedValue({orderId: 'order-1', payment: null, refunds: []});
+    payment.mockResolvedValue({orderId: 'order-1', payment: null, refunds: [], refundEligibility: {eligible: false, remainingAmount: 0}});
   });
 
   it('shows cancellation only when eligible and refreshes after success', async () => {
     cancel.mockResolvedValueOnce({orderStatus: 'cancelled'});
     const refresh = jest.fn().mockResolvedValue(undefined);
     const view = await screen(baseOrder, refresh);
-    await waitFor(() => expect(view.getByText('No claims for this order.')).toBeTruthy());
+    await waitFor(() => expect(view.getByText('No online payment for this order.')).toBeTruthy());
     await fireEvent.press(view.getAllByText('Cancel Order')[1]);
     await waitFor(() => expect(view.getByLabelText('Cancellation reason')).toBeTruthy());
     await fireEvent.changeText(view.getByLabelText('Cancellation reason'), 'Changed plans');
@@ -56,7 +56,7 @@ describe('OrderCareSection', () => {
   it('shows backend cancellation errors without claiming success', async () => {
     cancel.mockRejectedValueOnce(new Error('Order cannot be cancelled'));
     const view = await screen();
-    await waitFor(() => expect(view.getByText('No claims for this order.')).toBeTruthy());
+    await waitFor(() => expect(view.getByText('No online payment for this order.')).toBeTruthy());
     await fireEvent.press(view.getAllByText('Cancel Order')[1]);
     await waitFor(() => expect(view.getByLabelText('Cancellation reason')).toBeTruthy());
     await fireEvent.changeText(view.getByLabelText('Cancellation reason'), 'Changed plans');
@@ -89,7 +89,7 @@ describe('OrderCareSection', () => {
   it('explains when iOS camera capture returns no photo', async () => {
     claims.mockResolvedValue([{id: 'existing', claim_type: 'damage', status: 'submitted', description: 'Test claim', created_at: new Date().toISOString(), customer_claim_photos: []}]);
     photo.mockResolvedValueOnce(null);
-    const view = await screen();
+    const view = await screen({...baseOrder, current_status: 'claim_period_active', claim_deadline_at: new Date(Date.now() + 60000).toISOString()});
     await waitFor(() => expect(view.getByText('Take claim photo')).toBeTruthy());
     await fireEvent.press(view.getByText('Take claim photo'));
     await waitFor(() => expect(view.getByText('Camera did not return a photo. Tap Use Photo after taking the picture.')).toBeTruthy());
@@ -97,10 +97,10 @@ describe('OrderCareSection', () => {
   });
 
   it('renders refund status and refreshes after a customer request', async () => {
-    payment.mockResolvedValue({orderId: 'order-1', payment: {paymentOrderId: 'payment-1', status: 'paid', amount: 10000, currency: 'INR'}, refunds: [{refundRequestId: 'refund-1', amount: 25, reason: 'Damage', status: 'requested', cancellation: false}]});
+    payment.mockResolvedValue({orderId: 'order-1', payment: {paymentOrderId: 'payment-1', status: 'paid', amount: 10000, currency: 'INR'}, refunds: [{refundRequestId: 'refund-1', amount: 25, reason: 'Damage', status: 'requested', cancellation: false}], refundEligibility: {eligible: true, remainingAmount: 75}});
     refund.mockResolvedValueOnce({} as any);
     const refresh = jest.fn().mockResolvedValue(undefined);
-    const view = await screen(baseOrder, refresh);
+    const view = await screen({...baseOrder, current_status: 'cancelled'}, refresh);
     await waitFor(() => expect(view.getByText('Refund: Requested · ₹25.00')).toBeTruthy());
     await fireEvent.press(view.getByText('Request Refund'));
     await waitFor(() => expect(view.getByLabelText('Refund amount')).toBeTruthy());
@@ -113,10 +113,29 @@ describe('OrderCareSection', () => {
 
   it('keeps partial data visible when one customer endpoint fails and supports retry', async () => {
     claims.mockRejectedValueOnce(new Error('Offline'));
-    const view = await screen();
+    const order = {...baseOrder, current_status: 'claim_period_active', claim_deadline_at: new Date(Date.now() + 60000).toISOString()};
+    const view = await screen(order);
     await waitFor(() => expect(view.getByText('Claims: Offline')).toBeTruthy());
     expect(view.getByText('No online payment for this order.')).toBeTruthy();
     await fireEvent.press(view.getByText('Retry order help'));
     await waitFor(() => expect(view.getByText('No claims for this order.')).toBeTruthy());
+  });
+
+  it('hides Claims and refund actions for a newly confirmed order', async () => {
+    payment.mockResolvedValue({orderId: 'order-1', payment: {paymentOrderId: 'payment-1', status: 'paid', amount: 10000, currency: 'INR'}, refunds: [], refundEligibility: {eligible: false, remainingAmount: 100}});
+    const view = await screen();
+    await waitFor(() => expect(view.getByText('Payment: Paid')).toBeTruthy());
+    expect(view.queryByText('Claims')).toBeNull();
+    expect(view.queryByText('Raise Claim')).toBeNull();
+    expect(view.queryByText('The claim period has ended.')).toBeNull();
+    expect(view.queryByText('Request Refund')).toBeNull();
+    expect(claims).not.toHaveBeenCalled();
+  });
+
+  it('shows a completed refund status without allowing a duplicate request', async () => {
+    payment.mockResolvedValue({orderId: 'order-1', payment: {paymentOrderId: 'payment-1', status: 'refunded', amount: 10000, currency: 'INR'}, refunds: [{refundRequestId: 'refund-1', amount: 100, reason: 'Cancelled', status: 'completed', cancellation: true}], refundEligibility: {eligible: false, remainingAmount: 0}});
+    const view = await screen({...baseOrder, current_status: 'cancelled'});
+    await waitFor(() => expect(view.getByText('Refund: Completed · ₹100.00')).toBeTruthy());
+    expect(view.queryByText('Request Refund')).toBeNull();
   });
 });

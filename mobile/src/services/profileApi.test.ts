@@ -1,4 +1,4 @@
-import {getCustomerProfile, updateCustomerName, validateName} from './profileApi';
+import {customerNameFromProfile, getCustomerProfile, updateCustomerName, validateName} from './profileApi';
 import {apiRequest} from './api';
 jest.mock('./api', () => ({apiRequest: jest.fn()}));
 const request = apiRequest as jest.Mock;
@@ -12,4 +12,10 @@ test('profile read and name update use owned customer endpoints', async () => {
   expect(request).toHaveBeenNthCalledWith(1, '/customers/me', {accessToken: 'token'});
   expect(request).toHaveBeenNthCalledWith(2, '/customers/me', {method: 'PATCH', accessToken: 'token', body: {fullName: 'Asha Reddy'}});
   await expect(updateCustomerName('token', '1')).rejects.toThrow();
+});
+test('reads the Customer name from login and restored /auth/me profiles', () => {
+  expect(customerNameFromProfile({full_name: ' Tarun Reddy '})).toBe('Tarun Reddy');
+  expect(customerNameFromProfile({profile: {full_name: 'Tarun Reddy'}})).toBe('Tarun Reddy');
+  expect(customerNameFromProfile({profile: {full_name: '  '}})).toBeNull();
+  expect(customerNameFromProfile(null)).toBeNull();
 });

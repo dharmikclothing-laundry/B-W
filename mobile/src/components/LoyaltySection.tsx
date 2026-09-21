@@ -13,8 +13,8 @@ type Props = {
 
 export default function LoyaltySection({accessToken, subtotalAfterCoupon, points, onChange, onRateChange}: Props) {
   const [balance, setBalance] = useState<number | null>(null);
-  const [pointsPerRupee, setPointsPerRupee] = useState(100);
-  const [minimumRupees, setMinimumRupees] = useState(10);
+  const [pointsPerRupee, setPointsPerRupee] = useState(10);
+  const [minimumRupees, setMinimumRupees] = useState(100);
   const [input, setInput] = useState(points ? String(points) : '');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);

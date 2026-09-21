@@ -238,7 +238,7 @@ export class PaymentsService {
   }
 
   async getOrderPaymentSummary(profileId: string, orderId: string) {
-    await this.requireOwnedOrder(profileId, orderId);
+    const order = await this.requireOwnedOrder(profileId, orderId);
 
     const { data: payment, error: paymentError } = await this.db()
       .from('payment_orders')
@@ -259,6 +259,7 @@ export class PaymentsService {
         orderId,
         payment: null,
         refunds: [],
+        refundEligibility: {eligible: false, remainingAmount: 0},
       };
     }
 
@@ -277,6 +278,15 @@ export class PaymentsService {
     const providerMatchesRuntime = payment.provider === this.providerName();
     const canResume =
       providerMatchesRuntime && ['created', 'authorized'].includes(payment.status);
+
+    const refundRows = refunds ?? [];
+    const committed = refundRows.filter((refund: any) =>
+      ['requested', 'under_review', 'approved', 'processing', 'completed'].includes(refund.status))
+      .reduce((total: number, refund: any) => total + Number(refund.amount), 0);
+    const remainingAmount = Math.max(0, Number(payment.amount) - committed);
+    const lifecycleEligible = ['cancelled', 'claim_period_active'].includes(order.current_status);
+    const refundEligible = ['paid', 'partially_refunded'].includes(payment.status) &&
+      Boolean(payment.provider_order_id) && lifecycleEligible && remainingAmount > 0;
 
     return {
       orderId,
@@ -297,7 +307,7 @@ export class PaymentsService {
             ? this.provider.publicKeyId
             : null,
       },
-      refunds: (refunds ?? []).map((refund: any) => ({
+      refunds: refundRows.map((refund: any) => ({
         refundRequestId: refund.id,
         amount: Number(refund.amount),
         reason: refund.reason,
@@ -307,6 +317,7 @@ export class PaymentsService {
         processedAt: refund.processed_at,
         createdAt: refund.created_at,
       })),
+      refundEligibility: {eligible: refundEligible, remainingAmount},
     };
   }
 

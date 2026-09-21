@@ -42,6 +42,7 @@ export type PaymentSummary = {
     status: string;
     cancellation: boolean;
   }>;
+  refundEligibility: {eligible: boolean; remainingAmount: number};
 };
 
 export async function getPaymentSummary(accessToken: string, orderId: string) {

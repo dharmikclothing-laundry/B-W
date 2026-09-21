@@ -3,6 +3,13 @@ import {apiRequest} from './api';
 export type CustomerProfile = {id: string; full_name: string | null; phone: string | null};
 export type CustomerRecord = {id: string; profile_id: string; profiles: CustomerProfile};
 
+export function customerNameFromProfile(value: unknown): string | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as {full_name?: unknown; profile?: {full_name?: unknown}};
+  const name = typeof record.full_name === 'string' ? record.full_name : record.profile?.full_name;
+  return typeof name === 'string' && name.trim() ? name.trim() : null;
+}
+
 export function validateName(value: string): string | null {
   const name = value.trim();
   if (name.length < 2 || name.length > 150) return 'Name must be between 2 and 150 characters.';

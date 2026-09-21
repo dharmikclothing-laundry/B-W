@@ -132,6 +132,14 @@ BEGIN
             USING ERRCODE = '23514';
     END IF;
 
+    IF v_order.current_status NOT IN (
+        'cancelled'::public.order_status,
+        'claim_period_active'::public.order_status
+    ) THEN
+        RAISE EXCEPTION 'Order is not eligible for a refund request'
+            USING ERRCODE = '23514';
+    END IF;
+
     SELECT COALESCE(sum(refund.amount), 0)
     INTO v_committed
     FROM public.refund_requests AS refund

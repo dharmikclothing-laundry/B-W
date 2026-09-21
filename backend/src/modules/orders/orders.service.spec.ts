@@ -15,15 +15,15 @@ it('requires an idempotency key at the customer order API boundary', async () =>
 });
 
 describe('OrdersService checkout rewards', () => {
-  function fixture(minimumOrderAmount = 0) {
+  function fixture(minimumOrderAmount = 0, servicePrice = 200) {
     const from = jest.fn((table: string) => {
       const results: Record<string, any> = {
         customers: {data: {id: 'customer-1'}, error: null},
         customer_addresses: {data: {id: 'address-1'}, error: null},
         services: {data: {id: 'service-1', is_active: true}, error: null},
-        service_prices: {data: [{price: 100}], error: null},
+        service_prices: {data: [{price: servicePrice}], error: null},
         checkout_pricing_policies: {data: {pickup_delivery_fee: 50, free_delivery_threshold: 500, gst_rate_percent: 5, minimum_order_amount: minimumOrderAmount}, error: null},
-        admin_growth_settings: {data: {loyalty_points_per_rupee: 100, loyalty_minimum_redemption_rupees: 10}, error: null},
+        admin_growth_settings: {data: {loyalty_points_per_rupee: 10, loyalty_minimum_redemption_rupees: 100}, error: null},
       };
       const value = results[table];
       const chain: any = {};
@@ -52,7 +52,7 @@ describe('OrdersService checkout rewards', () => {
     await expect(f.service.create('profile-1', f.dto)).resolves.toMatchObject({id: 'order-1'});
     expect(f.rpc).toHaveBeenCalledWith('create_customer_order_with_rewards_atomic', expect.objectContaining({
       p_customer_id: 'customer-1', p_points: 1000,
-      p_order: expect.objectContaining({discount_amount: 20, loyalty_discount_amount: 10, total_amount: 136.5}),
+      p_order: expect.objectContaining({discount_amount: 110, loyalty_discount_amount: 100, total_amount: 147}),
     }));
     expect(f.from).not.toHaveBeenCalledWith('orders');
   });
@@ -62,9 +62,17 @@ describe('OrdersService checkout rewards', () => {
     await expect(f.service.create('profile-1', f.dto)).rejects.toBeInstanceOf(BadRequestException);
     expect(f.rpc).not.toHaveBeenCalled();
   });
-  it('rejects redemptions below ₹10', async () => {
+  it('converts 2,000 points to ₹200 on the server', async () => {
+    const f = fixture(0, 300);
+    f.dto.loyaltyPointsToRedeem = 2000;
+    await expect(f.service.create('profile-1', f.dto)).resolves.toMatchObject({id: 'order-1'});
+    expect(f.rpc).toHaveBeenCalledWith('create_customer_order_with_rewards_atomic', expect.objectContaining({
+      p_points: 2000, p_order: expect.objectContaining({loyalty_discount_amount: 200}),
+    }));
+  });
+  it('rejects redemptions below the 1,000 point minimum', async () => {
     const f = fixture();
-    f.dto.loyaltyPointsToRedeem = 999;
+    f.dto.loyaltyPointsToRedeem = 950;
     await expect(f.service.create('profile-1', f.dto)).rejects.toBeInstanceOf(BadRequestException);
     expect(f.rpc).not.toHaveBeenCalled();
   });
@@ -77,7 +85,7 @@ describe('OrdersService checkout rewards', () => {
     expect(f.from).not.toHaveBeenCalledWith('orders');
   });
   it('blocks order creation below the server minimum order amount', async () => {
-    const f = fixture(150);
+    const f = fixture(250);
     await expect(f.service.create('profile-1', f.dto)).rejects.toThrow('minimum order');
     expect(f.rpc).not.toHaveBeenCalled();
   });

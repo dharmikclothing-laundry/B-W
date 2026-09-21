@@ -88,9 +88,10 @@ async function main() {
   console.log('PASS: package price, validity and credits; sold contract immutable; activation independent');
   try {
     await call('PATCH', '/admin/growth/settings', token, 200, {referralEnabled: false, referralRewardPoints: 50,
-      loyaltyEarnPointsPerRupee: 0.02, loyaltyPointsPerRupee: 100, loyaltyMinimumRedemptionRupees: 5});
+      loyaltyEarnPointsPerRupee: 0.02, loyaltyPointsPerRupee: 20, loyaltyMinimumRedemptionRupees: 50});
     const rules = await call('GET', '/growth/rules', token, 200);
-    if (rules.referral_enabled || Number(rules.loyalty_earn_points_per_rupee) !== 0.02 || Number(rules.loyalty_minimum_redemption_rupees) !== 5)
+    if (rules.referral_enabled || Number(rules.loyalty_earn_points_per_rupee) !== 0.02 ||
+      Number(rules.loyalty_points_per_rupee) !== 20 || Number(rules.loyalty_minimum_redemption_rupees) !== 50)
       throw new Error('Admin growth policy did not reach customer contract');
     console.log('PASS: Admin referral and loyalty rule changes reach server-authoritative customer contract');
   } finally {

@@ -10,8 +10,8 @@ describe('checkout loyalty redemption', () => {
   beforeEach(() => {jest.clearAllMocks(); loyalty.mockResolvedValue({balance: 2500, transactions: []});});
   it('validates balance and service total before applying points', async () => {
     const change = jest.fn();
-    const view = await render(<LoyaltySection accessToken="token" subtotalAfterCoupon={20} points={0} onChange={change} />);
-    await waitFor(() => expect(view.getByText('Available: 2500 points · 100 points = ₹1 · Minimum 1,000 points (₹10)')).toBeTruthy());
+    const view = await render(<LoyaltySection accessToken="token" subtotalAfterCoupon={200} points={0} onChange={change} />);
+    await waitFor(() => expect(view.getByText('Available: 2500 points · 10 points = ₹1 · Minimum 1,000 points (₹100)')).toBeTruthy());
     await fireEvent.changeText(view.getByLabelText('Points to use'), '3000');
     await fireEvent.press(view.getByText('Apply'));
     expect(view.getByText('Insufficient loyalty points.')).toBeTruthy();
@@ -20,11 +20,11 @@ describe('checkout loyalty redemption', () => {
     expect(view.getByText('Points exceed the remaining service price.')).toBeTruthy();
     await fireEvent.changeText(view.getByLabelText('Points to use'), '999');
     await fireEvent.press(view.getByText('Apply'));
-    expect(view.getByText('Redeem at least 1,000 points (₹10).')).toBeTruthy();
+    expect(view.getByText('Redeem at least 1,000 points (₹100).')).toBeTruthy();
     await fireEvent.changeText(view.getByLabelText('Points to use'), '1000');
     await fireEvent.press(view.getByText('Apply'));
     expect(change).toHaveBeenCalledWith(1000);
-    await view.rerender(<LoyaltySection accessToken="token" subtotalAfterCoupon={20} points={1000} onChange={change} />);
+    await view.rerender(<LoyaltySection accessToken="token" subtotalAfterCoupon={200} points={1000} onChange={change} />);
     await fireEvent.press(view.getByText('Remove points'));
     expect(change).toHaveBeenCalledWith(0);
   });

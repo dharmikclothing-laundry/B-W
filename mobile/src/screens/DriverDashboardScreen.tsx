@@ -1,6 +1,7 @@
 import React, {useCallback, useEffect, useState} from 'react';
-import {ActivityIndicator, RefreshControl, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
-import {DriverDashboard, DriverJob, formatDriverAddress, getDriverDashboard} from '../services/driverAssignmentsApi';
+import {ActivityIndicator, RefreshControl, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View} from 'react-native';
+import NativeQrScannerButton from '../components/NativeQrScannerButton';
+import {DriverDashboard, DriverJob, formatDriverAddress, getDriverDashboard, lookupDriverOrder} from '../services/driverAssignmentsApi';
 
 type Props = {accessToken: string; onJob: (id: string) => void; onNotifications: () => void; onProfile: () => void; onLogout: () => Promise<void>};
 
@@ -27,6 +28,9 @@ export default function DriverDashboardScreen({accessToken, onJob, onNotificatio
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [lookupCode, setLookupCode] = useState('');
+  const [lookupError, setLookupError] = useState('');
+  const [lookingUp, setLookingUp] = useState(false);
   const load = useCallback(async (refresh = false) => {
     if (refresh) setRefreshing(true); else setLoading(true);
     setError('');
@@ -35,6 +39,13 @@ export default function DriverDashboardScreen({accessToken, onJob, onNotificatio
     finally {setLoading(false); setRefreshing(false);}
   }, [accessToken]);
   useEffect(() => {load();}, [load]);
+  const openLookup = async (code: string) => {
+    if (lookingUp) return;
+    setLookingUp(true); setLookupError('');
+    try {const result = await lookupDriverOrder(accessToken, code); onJob(result.assignmentId);}
+    catch (cause) {setLookupError(cause instanceof Error ? cause.message : 'Assigned order not found.');}
+    finally {setLookingUp(false);}
+  };
 
   return <SafeAreaView style={styles.page}><ScrollView contentContainerStyle={styles.content}
     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => {load(true);}} />}>
@@ -52,6 +63,16 @@ export default function DriverDashboardScreen({accessToken, onJob, onNotificatio
         <View><Text style={styles.metric}>{dashboard.summary.completed}</Text><Text style={styles.summaryLabel}>Completed</Text></View>
       </View>
       <View style={styles.split}><Text style={styles.splitText}>Pickups {dashboard.summary.pickups}</Text><Text style={styles.splitText}>Deliveries {dashboard.summary.deliveries}</Text></View>
+      <Text style={styles.heading}>Assigned Jobs</Text>
+      <View style={styles.lookupCard}>
+        <NativeQrScannerButton label="Scan Order QR" onScanned={openLookup} />
+        <Text style={styles.lookupLabel}>Search Order</Text>
+        <View style={styles.lookupRow}><TextInput accessibilityLabel="Order number or QR payload" autoCapitalize="characters" autoCorrect={false}
+          placeholder="BW-20260921-95FFAB54" value={lookupCode} onChangeText={setLookupCode} style={styles.input} />
+          <TouchableOpacity accessibilityRole="button" disabled={lookingUp} style={styles.searchButton} onPress={() => openLookup(lookupCode)}><Text style={styles.primaryText}>{lookingUp ? 'Finding…' : 'Find'}</Text></TouchableOpacity></View>
+        {lookupError ? <Text accessibilityRole="alert" style={styles.error}>{lookupError}</Text> : null}
+      </View>
+      {!dashboard.pickups.length && !dashboard.deliveries.length ? <View style={styles.empty}><Text style={styles.emptyTitle}>No jobs assigned right now</Text><Text style={styles.muted}>New assignments will appear here when dispatch sends them.</Text></View> : null}
       <JobQueue title="Pickup queue" jobs={dashboard.pickups} onJob={onJob} />
       <JobQueue title="Delivery queue" jobs={dashboard.deliveries} onJob={onJob} />
     </> : !loading && !error ? <Text>No assignment data available.</Text> : null}
@@ -59,4 +80,4 @@ export default function DriverDashboardScreen({accessToken, onJob, onNotificatio
   </ScrollView></SafeAreaView>;
 }
 
-const styles = StyleSheet.create({page: {flex: 1, backgroundColor: '#F7F6F2'}, content: {padding: 18, paddingBottom: 36, gap: 16}, header: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}, headerActions: {flexDirection: 'row', gap: 8}, eyebrow: {fontSize: 11, letterSpacing: 1.4, fontWeight: '800', color: '#67635B'}, title: {fontSize: 30, fontWeight: '900', color: '#151515'}, icon: {width: 44, height: 44, borderRadius: 14, backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2DED6', alignItems: 'center', justifyContent: 'center'}, date: {fontWeight: '700', color: '#67635B'}, summary: {flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#151515', borderRadius: 18, padding: 18}, metric: {color: '#fff', fontSize: 26, fontWeight: '900'}, summaryLabel: {color: '#D8D5CE'}, muted: {color: '#6D685F'}, split: {flexDirection: 'row', gap: 8}, splitText: {flex: 1, backgroundColor: '#EDEAE3', borderRadius: 12, padding: 12, fontWeight: '800'}, section: {gap: 10}, heading: {fontSize: 21, fontWeight: '900', color: '#181715'}, card: {backgroundColor: '#fff', borderRadius: 18, borderWidth: 1, borderColor: '#E2DED6', padding: 16, gap: 9}, cardTop: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}, badge: {borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5}, pickupBadge: {backgroundColor: '#E7F3EB'}, deliveryBadge: {backgroundColor: '#E8EEF8'}, badgeText: {fontSize: 11, fontWeight: '900'}, status: {fontWeight: '800', color: '#5E5A53'}, address: {fontSize: 17, lineHeight: 23, fontWeight: '800'}, meta: {color: '#6D685F'}, primaryButton: {minHeight: 46, backgroundColor: '#151515', borderRadius: 13, justifyContent: 'center', alignItems: 'center', marginTop: 4}, primaryText: {color: '#fff', fontWeight: '900'}, empty: {backgroundColor: '#EDEAE3', borderRadius: 16, padding: 16}, emptyTitle: {fontWeight: '900', fontSize: 16}, alert: {backgroundColor: '#FFF0EE', borderRadius: 14, padding: 14, gap: 8}, error: {color: '#9A241E'}, link: {fontWeight: '900'}, logout: {alignItems: 'center', padding: 14}, logoutText: {color: '#8C2D26', fontWeight: '800'}});
+const styles = StyleSheet.create({page: {flex: 1, backgroundColor: '#F7F6F2'}, content: {padding: 18, paddingBottom: 36, gap: 16}, header: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}, headerActions: {flexDirection: 'row', gap: 8}, eyebrow: {fontSize: 11, letterSpacing: 1.4, fontWeight: '800', color: '#67635B'}, title: {fontSize: 30, fontWeight: '900', color: '#151515'}, icon: {width: 44, height: 44, borderRadius: 14, backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2DED6', alignItems: 'center', justifyContent: 'center'}, date: {fontWeight: '700', color: '#67635B'}, summary: {flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#151515', borderRadius: 18, padding: 18}, metric: {color: '#fff', fontSize: 26, fontWeight: '900'}, summaryLabel: {color: '#D8D5CE'}, muted: {color: '#6D685F'}, split: {flexDirection: 'row', gap: 8}, splitText: {flex: 1, backgroundColor: '#EDEAE3', borderRadius: 12, padding: 12, fontWeight: '800'}, section: {gap: 10}, heading: {fontSize: 21, fontWeight: '900', color: '#181715'}, lookupCard: {backgroundColor: '#fff', borderRadius: 18, borderWidth: 1, borderColor: '#E2DED6', padding: 14, gap: 10}, lookupLabel: {fontWeight: '900', fontSize: 16}, lookupRow: {flexDirection: 'row', gap: 8}, input: {flex: 1, minHeight: 48, borderWidth: 1, borderColor: '#CFCAC0', borderRadius: 12, paddingHorizontal: 12}, searchButton: {minWidth: 72, minHeight: 48, borderRadius: 12, backgroundColor: '#151515', alignItems: 'center', justifyContent: 'center'}, card: {backgroundColor: '#fff', borderRadius: 18, borderWidth: 1, borderColor: '#E2DED6', padding: 16, gap: 9}, cardTop: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}, badge: {borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5}, pickupBadge: {backgroundColor: '#E7F3EB'}, deliveryBadge: {backgroundColor: '#E8EEF8'}, badgeText: {fontSize: 11, fontWeight: '900'}, status: {fontWeight: '800', color: '#5E5A53'}, address: {fontSize: 17, lineHeight: 23, fontWeight: '800'}, meta: {color: '#6D685F'}, primaryButton: {minHeight: 46, backgroundColor: '#151515', borderRadius: 13, justifyContent: 'center', alignItems: 'center', marginTop: 4}, primaryText: {color: '#fff', fontWeight: '900'}, empty: {backgroundColor: '#EDEAE3', borderRadius: 16, padding: 16}, emptyTitle: {fontWeight: '900', fontSize: 16}, alert: {backgroundColor: '#FFF0EE', borderRadius: 14, padding: 14, gap: 8}, error: {color: '#9A241E'}, link: {fontWeight: '900'}, logout: {alignItems: 'center', padding: 14}, logoutText: {color: '#8C2D26', fontWeight: '800'}});

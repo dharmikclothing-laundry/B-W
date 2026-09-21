@@ -24,7 +24,7 @@ describe('customer benefits', () => {
   it('directs redemption to checkout without deducting points', async () => {
     const view = await render(<BenefitsScreen accessToken="token" onBack={jest.fn()} />);
     await waitFor(() => expect(view.getByText('BW123')).toBeTruthy());
-    expect(view.getByText('100 points = ₹1. Redeem at least 1,000 points (₹10) during checkout.')).toBeTruthy();
+    expect(view.getByText('10 points = ₹1. Redeem at least 1,000 points (₹100) during checkout.')).toBeTruthy();
     expect(view.getByText('Earn 1 point per ₹100 paid after delivery.')).toBeTruthy();
   });
 });

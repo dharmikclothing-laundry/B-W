@@ -28,7 +28,7 @@ export default function AdminGrowthScreen({accessToken, onBack}: Props) {
   const [pkg, setPackage] = useState(defaultPackage);
   const [creditLimit, setCreditLimit] = useState('');
   const [settings, setSettings] = useState({referralEnabled: true, referralRewardPoints: '0',
-    loyaltyEarnPointsPerRupee: '0.01', loyaltyPointsPerRupee: '100', loyaltyMinimumRedemptionRupees: '10'});
+    loyaltyEarnPointsPerRupee: '0.01', loyaltyPointsPerRupee: '10', loyaltyMinimumRedemptionRupees: '100'});
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {

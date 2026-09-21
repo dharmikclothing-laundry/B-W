@@ -87,6 +87,17 @@ describe('PaymentsService customer refund requests', () => {
 });
 
 describe('PaymentsService owned payment recovery', () => {
+  it('exposes refund eligibility only for a captured payment in an eligible lifecycle', async () => {
+    const payment = {id: 'payment-1', order_id: 'order-1', provider: 'razorpay', provider_order_id: 'provider-1',
+      amount: '100.00', currency: 'INR', status: 'paid', paid_at: '2026-09-21T00:00:00.000Z',
+      created_at: '2026-09-21T00:00:00.000Z', updated_at: '2026-09-21T00:00:00.000Z'};
+    const from = jest.fn((table: string) => table === 'payment_orders' ? fluentResult(payment) : fluentResult([]));
+    const service = new PaymentsService({admin: {from}} as any, providerMock());
+    jest.spyOn(service as any, 'requireOwnedOrder').mockResolvedValue({id: 'order-1', current_status: 'claim_period_active'});
+    const result = await service.getOrderPaymentSummary('profile-1', 'order-1');
+    expect(result.refundEligibility).toEqual({eligible: true, remainingAmount: 100});
+  });
+
   it('returns resumable provider data and safe refund status fields', async () => {
     const payment = {
       id: 'payment-1',
@@ -157,6 +168,7 @@ describe('PaymentsService owned payment recovery', () => {
           createdAt: '2026-09-15T00:01:00.000Z',
         },
       ],
+      refundEligibility: {eligible: false, remainingAmount: 0},
     });
     expect(ownership).toHaveBeenCalledWith('profile-1', 'order-1');
   });
@@ -180,6 +192,7 @@ describe('PaymentsService owned payment recovery', () => {
       orderId: 'order-1',
       payment: null,
       refunds: [],
+      refundEligibility: {eligible: false, remainingAmount: 0},
     });
   });
 });

@@ -27,8 +27,21 @@ export type DriverDashboard = {
   deliveries: DriverJob[];
 };
 
+export type DriverOrderLookup = {
+  assignmentId: string; orderId: string; orderNumber: string;
+  assignmentType: 'pickup' | 'delivery'; assignmentStatus: string; orderStatus: string;
+};
+
 export function getDriverDashboard(accessToken: string) {
   return apiRequest<DriverDashboard>('/drivers/me/dashboard', {accessToken});
+}
+
+export function lookupDriverOrder(accessToken: string, code: string) {
+  const normalized = code.trim();
+  if (!normalized) return Promise.reject(new Error('Enter an order number or scan an order QR.'));
+  return apiRequest<DriverOrderLookup>('/drivers/me/orders/lookup', {
+    accessToken, method: 'POST', body: {code: normalized},
+  });
 }
 
 export function getDriverJob(accessToken: string, assignmentId: string) {

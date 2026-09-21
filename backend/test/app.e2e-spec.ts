@@ -753,6 +753,7 @@ describe("Backend HTTP integration", () => {
         orderId,
         payment: null,
         refunds: [],
+        refundEligibility: {eligible: false, remainingAmount: 0},
       });
     try {
       const response = await app.inject({
@@ -765,6 +766,7 @@ describe("Backend HTTP integration", () => {
         orderId,
         payment: null,
         refunds: [],
+        refundEligibility: {eligible: false, remainingAmount: 0},
       });
       expect(summary).toHaveBeenCalledWith("profile-1", orderId);
     } finally {

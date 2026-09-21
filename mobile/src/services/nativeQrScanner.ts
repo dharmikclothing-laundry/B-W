@@ -10,7 +10,7 @@ export async function scanOrderQr() {
     });
   } catch (cause) {
     if (cause instanceof Error && /cancel/i.test(cause.message)) throw cause;
-    throw new Error('QR scanner is unavailable on this device. Enter the handoff code instead.');
+    throw new Error('QR scanner is unavailable on this device. Enter the order code instead.');
   }
   const value = barcode.value.trim();
   if (!/^BW1:[0-9a-f-]{36}$/i.test(value)) {

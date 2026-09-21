@@ -69,6 +69,7 @@ import DriverNotificationsScreen from './src/screens/DriverNotificationsScreen';
 import DriverJobDetailScreen from './src/screens/DriverJobDetailScreen';
 import {stopDriverTripBackground} from './src/services/driverTripBackground';
 import {accountRoleFromProfile} from './src/services/driverProfileApi';
+import {customerNameFromProfile} from './src/services/profileApi';
 import SupportScreen from './src/screens/SupportScreen';
 import ReceiptScreen from './src/screens/ReceiptScreen';
 import AccountScreen from './src/screens/AccountScreen';
@@ -1466,6 +1467,7 @@ const useSelectedLocation =
             name="Home">
             {() => (
               <CustomerTabFrame active="home" onHome={resetToHome} onOrders={openOrders} onPackages={() => navigationRef.isReady() && navigationRef.navigate('Packages')} onAccount={() => navigationRef.isReady() && navigationRef.navigate('Account')}><HomeScreen
+                customerName={customerNameFromProfile(profile)}
                 servicesLoading={
                   servicesLoading
                 }
@@ -1858,6 +1860,7 @@ const useSelectedLocation =
               ) {
                 return (
                   <HomeScreen
+                    customerName={customerNameFromProfile(profile)}
                     servicesLoading={
                       servicesLoading
                     }

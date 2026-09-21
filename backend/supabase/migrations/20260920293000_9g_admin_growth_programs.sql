@@ -7,8 +7,8 @@ CREATE TABLE public.admin_growth_settings (
   referral_enabled boolean NOT NULL DEFAULT true,
   referral_reward_points integer NOT NULL DEFAULT 0 CHECK (referral_reward_points BETWEEN 0 AND 1000000),
   loyalty_earn_points_per_rupee numeric(10,4) NOT NULL DEFAULT 0.01 CHECK (loyalty_earn_points_per_rupee BETWEEN 0 AND 100),
-  loyalty_points_per_rupee integer NOT NULL DEFAULT 100 CHECK (loyalty_points_per_rupee BETWEEN 1 AND 1000000),
-  loyalty_minimum_redemption_rupees numeric(12,2) NOT NULL DEFAULT 10 CHECK (loyalty_minimum_redemption_rupees BETWEEN 0 AND 1000000),
+  loyalty_points_per_rupee integer NOT NULL DEFAULT 10 CHECK (loyalty_points_per_rupee BETWEEN 1 AND 1000000),
+  loyalty_minimum_redemption_rupees numeric(12,2) NOT NULL DEFAULT 100 CHECK (loyalty_minimum_redemption_rupees BETWEEN 0 AND 1000000),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 INSERT INTO public.admin_growth_settings(id) VALUES(true);

@@ -25,8 +25,8 @@ describe('order review rewards summary', () => {
     />);
     await waitFor(() => expect(view.getByLabelText('Applied loyalty points')).toBeTruthy());
     expect(view.getByText('Package, coupons & points discount')).toBeTruthy();
-    expect(view.getByText('−₹20.00')).toBeTruthy();
-    expect(view.getAllByText(/451.50/).length).toBeGreaterThan(0);
+    expect(view.getByText('−₹110.00')).toBeTruthy();
+    expect(view.getAllByText(/357.00/).length).toBeGreaterThan(0);
   });
   it('blocks continuing below the server minimum order amount', async () => {
     offers.mockResolvedValue([]); loyalty.mockResolvedValue({balance: 0, transactions: []});

@@ -88,7 +88,7 @@ export default function OrderReviewScreen({
   onChangePickupTime,
   onContinueToPayment,
 }: OrderReviewScreenProps) {
-  const [pointsPerRupee, setPointsPerRupee] = useState(100);
+  const [pointsPerRupee, setPointsPerRupee] = useState(10);
   const pricing =
     useMemo(
       () =>

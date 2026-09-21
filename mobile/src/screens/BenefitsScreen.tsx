@@ -63,7 +63,7 @@ export default function BenefitsScreen({accessToken, onBack}: Props) {
     {loyalty ? <View style={styles.card}>
       <Text style={styles.title}>Loyalty points</Text>
       <Text accessibilityLabel="Loyalty balance" style={styles.code}>{loyalty.balance}</Text>
-      <Text>100 points = ₹1. Redeem at least 1,000 points (₹10) during checkout.</Text>
+      <Text>10 points = ₹1. Redeem at least 1,000 points (₹100) during checkout.</Text>
       <Text>Earn 1 point per ₹100 paid after delivery.</Text>
       <Text style={styles.subtitle}>Points history</Text>
       {loyalty.transactions.length === 0 ? <Text>No points activity yet.</Text> : loyalty.transactions.map(row =>

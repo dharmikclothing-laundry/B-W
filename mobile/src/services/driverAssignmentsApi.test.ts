@@ -1,4 +1,4 @@
-import {getDriverDashboard, getDriverJob, acceptDriverJob, rejectDriverJob, startDriverNavigation, markDriverArrived, beginFacilityTransit, getDriverHandoffQr, verifyDriverPickupOtp, publishDriverTripLocation, formatDriverAddress} from './driverAssignmentsApi';
+import {getDriverDashboard, getDriverJob, acceptDriverJob, rejectDriverJob, startDriverNavigation, markDriverArrived, beginFacilityTransit, getDriverHandoffQr, verifyDriverPickupOtp, publishDriverTripLocation, formatDriverAddress, lookupDriverOrder} from './driverAssignmentsApi';
 import {apiRequest} from './api';
 
 jest.mock('./api', () => ({apiRequest: jest.fn()}));
@@ -11,6 +11,15 @@ test('dashboard and job detail use the existing authenticated request client', a
   await getDriverJob('token', 'assignment-1');
   expect(request).toHaveBeenNthCalledWith(1, '/drivers/me/dashboard', {accessToken: 'token'});
   expect(request).toHaveBeenNthCalledWith(2, '/drivers/me/assignments/assignment-1', {accessToken: 'token'});
+});
+
+test('order lookup sends only the exact code to the Driver-scoped backend route', async () => {
+  request.mockResolvedValue({assignmentId: 'assignment-1'});
+  await lookupDriverOrder('token', ' BW-20260921-95FFAB54 ');
+  expect(request).toHaveBeenCalledWith('/drivers/me/orders/lookup', {
+    accessToken: 'token', method: 'POST', body: {code: 'BW-20260921-95FFAB54'},
+  });
+  await expect(lookupDriverOrder('token', '  ')).rejects.toThrow('Enter an order number');
 });
 
 test('address formatting handles missing data', () => {

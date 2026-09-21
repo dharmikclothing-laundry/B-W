@@ -20,7 +20,7 @@
 - GET `/v1/growth/loyalty`
 - POST `/v1/orders` with optional `couponCode` and `loyaltyPointsToRedeem`
 
-Loyalty points are worth ₹0.01 each, with a minimum redemption of 1,000 points
+Loyalty points are worth ₹0.10 each, with a minimum redemption of 1,000 points
 (₹10). Redemption is a checkout discount in the
 atomic order creation flow; standalone redemption is unavailable.
 Eligible orders earn 0.01 point per ₹1 paid, rounded down to whole points after

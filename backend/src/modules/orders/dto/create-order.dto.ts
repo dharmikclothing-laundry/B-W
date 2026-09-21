@@ -51,7 +51,7 @@ export class CreateOrderDto {
 
   @IsOptional()
   @IsInt()
-  @Min(1000, {message: 'Redeem at least 1,000 points (₹10)'})
+  @Min(1000, {message: 'Redeem at least 1,000 points (₹100)'})
   loyaltyPointsToRedeem?: number;
   @IsUUID()
   pickupAddressId!: string;

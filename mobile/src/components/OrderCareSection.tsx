@@ -41,12 +41,14 @@ export default function OrderCareSection({accessToken, order, refreshKey, onActi
   const [showRefund, setShowRefund] = useState(false);
   const [refundAmount, setRefundAmount] = useState('');
   const [refundReason, setRefundReason] = useState('');
+  const postDelivery = Boolean(order.delivered_at) ||
+    ['delivered', 'claim_period_active', 'completed'].includes(order.current_status);
 
   const reload = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     const [claimResult, paymentResult] = await Promise.allSettled([
-      getOrderClaims(accessToken, order.id),
+      postDelivery ? getOrderClaims(accessToken, order.id) : Promise.resolve([]),
       getPaymentSummary(accessToken, order.id),
     ]);
     const failures: string[] = [];
@@ -56,7 +58,7 @@ export default function OrderCareSection({accessToken, order, refreshKey, onActi
     else failures.push(`Payment: ${message(paymentResult.reason)}`);
     setLoadError(failures.length ? failures.join('\n') : null);
     setLoading(false);
-  }, [accessToken, order.id]);
+  }, [accessToken, order.id, postDelivery]);
 
   useEffect(() => { reload(); }, [reload, refreshKey]);
 
@@ -117,7 +119,7 @@ export default function OrderCareSection({accessToken, order, refreshKey, onActi
   }, 'Refund request submitted.');
 
   const claimWindow = canRaiseClaim(order.current_status, order.claim_deadline_at);
-  const mayRefund = payment?.payment && ['paid', 'partially_refunded'].includes(payment.payment.status);
+  const mayRefund = payment?.refundEligibility?.eligible === true;
 
   return <View style={styles.wrap}>
     <Text style={styles.heading}>Order Help</Text>
@@ -132,7 +134,7 @@ export default function OrderCareSection({accessToken, order, refreshKey, onActi
       </>}
     </View> : null}
 
-    <View style={styles.card}>
+    {postDelivery ? <View style={styles.card}>
       <Text style={styles.title}>Claims</Text>
       {loading ? <Text style={styles.info}>Loading claims...</Text> : null}
       {!loading && claims.length === 0 ? <Text style={styles.info}>No claims for this order.</Text> : null}
@@ -151,15 +153,15 @@ export default function OrderCareSection({accessToken, order, refreshKey, onActi
         <TouchableOpacity accessibilityRole="button" onPress={async () => {try {const selected = await chooseClaimPhoto(); if (selected) setPhoto(selected);} catch (error) {setActionError(message(error));}}}><Text style={styles.link}>{photo ? `Photo: ${photo.name}` : 'Choose claim photo (optional)'}</Text></TouchableOpacity>
         <TouchableOpacity accessibilityRole="button" onPress={async () => {try {const selected = await chooseClaimPhoto('camera'); if (selected) setPhoto(selected);} catch (error) {setActionError(message(error));}}}><Text style={styles.link}>Take claim photo (optional)</Text></TouchableOpacity>
         <TouchableOpacity accessibilityRole="button" disabled={busy} onPress={submitClaim}><Text style={styles.link}>Submit Claim</Text></TouchableOpacity>
-      </>) : <Text style={styles.info}>The claim window is closed.</Text>}
-    </View>
+      </>) : <Text style={styles.info}>The claim period has ended.</Text>}
+    </View> : null}
 
     <View style={styles.card}>
-      <Text style={styles.title}>Payment & Refunds</Text>
+      <Text style={styles.title}>Payment</Text>
       {loading ? <Text style={styles.info}>Loading payment status...</Text> : null}
       {!loading && !payment?.payment ? <Text style={styles.info}>No online payment for this order.</Text> : null}
       {payment?.payment ? <Text style={styles.value}>Payment: {label(payment.payment.status)}</Text> : null}
-      {payment && payment.refunds.length === 0 ? <Text style={styles.info}>No refund requests.</Text> : null}
+      {payment && payment.refunds.length === 0 && mayRefund ? <Text style={styles.info}>No refund requests.</Text> : null}
       {payment?.refunds.map(refund => <View key={refund.refundRequestId} style={styles.row}>
         <Text style={styles.value}>Refund: {label(refund.status)} · ₹{refund.amount.toFixed(2)}</Text>
         <Text style={styles.info}>{refund.reason}</Text>

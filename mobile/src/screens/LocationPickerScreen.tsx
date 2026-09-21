@@ -17,9 +17,7 @@ import {
   View,
 } from 'react-native';
 
-import MapView, {
-  Marker,
-} from 'react-native-maps';
+import type MapView from 'react-native-maps';
 
 import {
   getPlaceDetails,
@@ -46,6 +44,16 @@ import type {
 
 import {MAPS_PROVIDER} from '../config/environment';
 import DevelopmentMapView from '../components/DevelopmentMapView';
+
+type NativeMapsModule = typeof import('react-native-maps');
+
+const nativeMapsModule: NativeMapsModule | null =
+  !__DEV__ && MAPS_PROVIDER !== 'mock'
+    ? require('react-native-maps') as NativeMapsModule
+    : null;
+
+const NativeMapView = nativeMapsModule?.default;
+const NativeMarker = nativeMapsModule?.Marker;
 
 type LocationPickerScreenProps = {
   accessToken: string;
@@ -652,7 +660,10 @@ export default function LocationPickerScreen({
             style={
               styles.mapContainer
             }>
-            {(__DEV__ || MAPS_PROVIDER === 'mock') ? (
+            {(__DEV__ ||
+            MAPS_PROVIDER === 'mock' ||
+            !NativeMapView ||
+            !NativeMarker) ? (
               <DevelopmentMapView
                 coordinates={coordinates}
                 onSelect={(latitude, longitude) => {
@@ -660,7 +671,7 @@ export default function LocationPickerScreen({
                 }}
               />
             ) : (
-            <MapView
+            <NativeMapView
               ref={
                 mapRef
               }
@@ -701,7 +712,7 @@ export default function LocationPickerScreen({
                   );
                 }
               }>
-              <Marker
+              <NativeMarker
                 coordinate={{
                   latitude:
                     coordinates.latitude,
@@ -727,7 +738,7 @@ export default function LocationPickerScreen({
                   }
                 }
               />
-            </MapView>
+            </NativeMapView>
             )}
 
             {reverseGeocoding ? (

@@ -12,6 +12,8 @@ const RELEVANT_ORDER_STATUSES: Record<'pickup' | 'delivery', string[]> = {
   pickup: ['pickup_assigned', 'pickup_accepted', 'en_route_pickup', 'pickup_otp_pending', 'picked_up', 'in_transit_to_facility'],
   delivery: ['delivery_assigned', 'delivery_accepted', 'en_route_delivery', 'delivery_otp_pending'],
 };
+const QR_PAYLOAD = /^BW1:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const ORDER_NUMBER = /^BW-[A-Z0-9-]{6,40}$/i;
 
 function operationallyRelevant(type: 'pickup' | 'delivery', assignmentStatus: string, orderStatus: string) {
   return ACTIVE_ASSIGNMENT_STATUSES.includes(assignmentStatus) &&
@@ -116,6 +118,50 @@ export class DriversService {
       },
       pickups: jobs.filter(job => job.type === 'pickup'),
       deliveries: jobs.filter(job => job.type === 'delivery'),
+    };
+  }
+
+  async lookupOrder(profileId: string, rawCode: string) {
+    const driverId = await this.requireActiveDriver(profileId);
+    const code = rawCode.trim();
+    let order: {id: string; order_number: string; current_status: string} | null = null;
+    const qrMatch = code.match(QR_PAYLOAD);
+    if (qrMatch) {
+      const {data: qr, error: qrError} = await this.supabase.admin.from('order_qr_codes')
+        .select('order_id,is_active').eq('secure_token', qrMatch[1]).eq('is_active', true).maybeSingle();
+      if (qrError || !qr?.is_active) throw new NotFoundException('Assigned order not found');
+      const {data, error} = await this.supabase.admin.from('orders')
+        .select('id,order_number,current_status').eq('id', qr.order_id).maybeSingle();
+      if (error) throw new BadRequestException('Unable to look up assigned order');
+      order = data;
+    } else if (ORDER_NUMBER.test(code)) {
+      const {data, error} = await this.supabase.admin.from('orders')
+        .select('id,order_number,current_status').eq('order_number', code.toUpperCase()).maybeSingle();
+      if (error) throw new BadRequestException('Unable to look up assigned order');
+      order = data;
+    } else {
+      throw new BadRequestException('Enter a valid B&W order number or scan an order QR');
+    }
+    if (!order) throw new NotFoundException('Assigned order not found');
+    const {data: assignment, error: assignmentError} = await this.supabase.admin.from('driver_assignments')
+      .select('id,order_id,driver_id,assignment_type,status,assigned_at')
+      .eq('order_id', order.id).eq('driver_id', driverId)
+      .order('assigned_at', {ascending: false}).limit(1).maybeSingle();
+    if (assignmentError) throw new BadRequestException('Unable to look up assigned order');
+    if (!assignment || !['assigned', 'accepted', 'en_route', 'arrived', 'completed'].includes(assignment.status)) {
+      throw new NotFoundException('Assigned order not found');
+    }
+    if (assignment.status !== 'completed' &&
+        !operationallyRelevant(assignment.assignment_type, assignment.status, order.current_status)) {
+      throw new ConflictException('This assignment is not active for the order lifecycle');
+    }
+    return {
+      assignmentId: assignment.id,
+      orderId: order.id,
+      orderNumber: order.order_number,
+      assignmentType: assignment.assignment_type,
+      assignmentStatus: assignment.status,
+      orderStatus: order.current_status,
     };
   }
 

@@ -696,8 +696,6 @@ export default function OrderDetailsScreen({
           </Text>
         </View>
 
-        <OrderQrCard accessToken={accessToken} orderId={orderId} />
-
         {trackingEnabled ? (
           <View style={styles.trackingCard}>
             <Text style={styles.trackingTitle}>Order Tracking</Text>
@@ -813,13 +811,6 @@ export default function OrderDetailsScreen({
           </View>
         ) : null}
 
-        <OrderCareSection
-          accessToken={accessToken}
-          order={order}
-          refreshKey={careRefreshKey}
-          onActionComplete={() => loadDetails(true)}
-        />
-
         <Text
           style={
             styles.sectionTitle
@@ -885,9 +876,6 @@ export default function OrderDetailsScreen({
           }>
           Order Summary
         </Text>
-        <TouchableOpacity onPress={() => onReceipt(order.id)}><Text style={styles.back}>View receipt and GST breakdown →</Text></TouchableOpacity>
-        <TouchableOpacity onPress={() => onReorder(order)}><Text style={styles.back}>Repeat this order →</Text></TouchableOpacity>
-
         <View
           style={
             styles.card
@@ -940,6 +928,9 @@ export default function OrderDetailsScreen({
             </Text>
           </View>
         </View>
+
+        <Text style={styles.sectionTitle}>Order QR</Text>
+        <OrderQrCard accessToken={accessToken} orderId={orderId} />
 
         <Text
           style={
@@ -1342,6 +1333,17 @@ export default function OrderDetailsScreen({
             )
           )}
         </View>
+
+        <OrderCareSection
+          accessToken={accessToken}
+          order={order}
+          refreshKey={careRefreshKey}
+          onActionComplete={() => loadDetails(true)}
+        />
+
+        <Text style={styles.sectionTitle}>Receipt & Help</Text>
+        <TouchableOpacity onPress={() => onReceipt(order.id)}><Text style={styles.back}>View receipt and GST breakdown →</Text></TouchableOpacity>
+        <TouchableOpacity onPress={() => onReorder(order)}><Text style={styles.back}>Repeat this order →</Text></TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );

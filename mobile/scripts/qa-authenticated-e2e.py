@@ -78,8 +78,30 @@ def enter(hint, value):
     run('shell', 'input', 'text', value)
 
 
+def open_order_card(order_number):
+    for _ in range(3):
+        current = tree()
+        if find(current, 'Order Details', exact=True) is not None:
+            return
+        card = find(current, f'ORDER, {order_number}')
+        if card is not None:
+            x, y = bounds(card)
+            run('shell', 'input', 'tap', str(x), str(y))
+        time.sleep(1)
+    raise RuntimeError(f'Order card did not open: {order_number}')
+
+
 def checkpoint(label):
     print(f'PASS: {label}', flush=True)
+
+
+def assert_absent_while_scrolling(*labels, swipes=6):
+    for _ in range(swipes):
+        current = tree()
+        for label in labels:
+            if find(current, label) is not None:
+                raise RuntimeError(f'Unexpected UI control was visible: {label}')
+        run('shell', 'input', 'swipe', '160', '520', '160', '175', '500')
 
 
 def dismiss_debug_banner():
@@ -112,29 +134,29 @@ def main():
     wait_for('Enter OTP', exact=True)
     enter('OTP', str(token))
     tap('Verify OTP', exact=True)
-    wait_for('What do you need?', exact=True)
+    wait_for('Welcome Tarun Reddy', exact=True)
+    wait_for('Service categories', exact=True)
     checkpoint('local OTP authentication')
 
     run('shell', 'am', 'force-stop', package)
     run('shell', 'am', 'start', '-n', f'{package}/.MainActivity')
-    wait_for('What do you need?', exact=True)
+    wait_for('Welcome Tarun Reddy', exact=True)
     checkpoint('session restore after restart')
 
     dismiss_debug_banner()
-    tap('View →', exact=True, scroll=True)
-    wait_for('Wash & Fold', exact=True)
-    checkpoint('service browsing')
-    tap('+', exact=True)
-    tap('Cart', exact=True)
+    tap('Wash & Fold, 1 service', exact=True)
+    tap('Add Wash & Fold', scroll=True)
+    checkpoint('category selection and service browsing')
+    for _ in range(4):
+        run('shell', 'input', 'swipe', '160', '180', '160', '540', '350')
+    tap('Cart with 1 items', exact=True)
     wait_for('Your Cart', exact=True)
     wait_for('1 item')
     checkpoint('add item to cart')
     dismiss_debug_banner()
     tap('Continue', scroll=True)
     wait_for('Pickup Address', exact=True)
-    address, _ = wait_for('Development Test Address', scroll=True)
-    _, address_y = bounds(address)
-    run('shell', 'input', 'tap', '48', str(max(175, address_y - 30)))
+    wait_for('Pickup from', exact=True, scroll=True)
     tap('Continue to Pickup Slot', scroll=True)
     checkpoint('saved address')
 
@@ -166,9 +188,19 @@ def main():
     wait_for('Your Orders', exact=True)
     tap('View Details', scroll=True)
     wait_for('Order Details', exact=True)
+    wait_for('Order QR', exact=True, scroll=True)
+    assert_absent_while_scrolling('Raise Claim', 'Request Refund', 'claim window closed')
+    checkpoint('visual order QR and pre-delivery care actions hidden')
     run('shell', 'input', 'keyevent', 'KEYCODE_BACK')
     wait_for('Your Orders', exact=True)
     checkpoint('history, details, and hardware Back')
+
+    enter('Search order number', 'BW-20260918-53D2AE8D')
+    open_order_card('BW-20260918-53D2AE8D')
+    wait_for('Claims', exact=True, scroll=True, tries=25)
+    wait_for('Quality · Submitted', exact=True, scroll=True)
+    checkpoint('post-delivery claim history visible')
+    run('shell', 'input', 'keyevent', 'KEYCODE_BACK')
 
     pid = run('shell', 'pidof', package).strip()
     if not pid:

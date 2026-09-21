@@ -9,7 +9,7 @@ const overview = {offers: [{id: 'o1', coupon_code: 'SAVE10', name: 'Sale', disco
   eligibility_note: null, redeemedCount: 1, termsLocked: true}], redemptions: [],
   packages: [{id: 'p1', name: 'Fictional pack', description: '', price: 100, validity_days: 30, is_active: true, soldCount: 1, termsLocked: true}],
   subscriptions: [], eligibility: [], services: [], settings: {referral_enabled: true, referral_reward_points: 0,
-    loyalty_earn_points_per_rupee: 0.01, loyalty_points_per_rupee: 100, loyalty_minimum_redemption_rupees: 10},
+    loyalty_earn_points_per_rupee: 0.01, loyalty_points_per_rupee: 10, loyalty_minimum_redemption_rupees: 100},
   referrals: [], loyaltyHistory: [], audit: []};
 beforeEach(() => {jest.clearAllMocks(); (getAdminGrowth as jest.Mock).mockResolvedValue(overview);
   (createAdminOffer as jest.Mock).mockResolvedValue({}); (setAdminGrowthSettings as jest.Mock).mockResolvedValue({});
@@ -34,7 +34,7 @@ test('creates inactive offer terms and edits Admin growth rules', async () => {
   await waitFor(() => expect(createAdminOffer).toHaveBeenCalledWith('token', expect.objectContaining({couponCode: 'LOCAL9G', discountValue: 10})));
   await fireEvent.press(view.getByText('Referrals: Enabled (tap to change)'));
   await fireEvent.press(view.getByText('Save growth rules'));
-  await waitFor(() => expect(setAdminGrowthSettings).toHaveBeenCalledWith('token', expect.objectContaining({referralEnabled: false, loyaltyPointsPerRupee: 100})));
+  await waitFor(() => expect(setAdminGrowthSettings).toHaveBeenCalledWith('token', expect.objectContaining({referralEnabled: false, loyaltyPointsPerRupee: 10})));
 });
 test('shows network error and retry', async () => {
   (getAdminGrowth as jest.Mock).mockRejectedValueOnce(new Error('Network unavailable'));

@@ -1,5 +1,6 @@
-import { Controller, Get, Param, ParseUUIDPipe, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Req } from '@nestjs/common';
 import { DriversService } from './drivers.service';
+import {DriverOrderLookupDto} from './dto/driver-order-lookup.dto';
 
 @Controller('drivers/me')
 export class DriverDashboardController {
@@ -8,6 +9,11 @@ export class DriverDashboardController {
   @Get('dashboard')
   dashboard(@Req() request: any) {
     return this.drivers.dashboard(request.user.id);
+  }
+
+  @Post('orders/lookup')
+  lookupOrder(@Req() request: any, @Body() body: DriverOrderLookupDto) {
+    return this.drivers.lookupOrder(request.user.id, body.code);
   }
 
   @Get('assignments/:id')

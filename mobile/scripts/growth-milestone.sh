@@ -62,7 +62,7 @@ gate 'no release signing or protected files changed' bash -c '
 
 note ''
 note "Automated result: $PASS passed, $FAIL failed."
-note 'Coupon and loyalty discounts are recalculated on the server; 100 points = ₹1, the minimum redemption is 1,000 points (₹10), and points redeem only at checkout.'
+note 'Coupon and loyalty discounts are recalculated on the server; 10 points = ₹1, the minimum redemption is 1,000 points (₹100), and points redeem only at checkout.'
 note 'Paid and delivered orders earn 0.01 point per ₹1, rounded down to whole points per order; COD is treated as paid at delivery.'
 note 'Development/UAT checks use local Supabase and mock providers; no production messaging or payment was used.'
 note 'Limited-use offers remain unavailable until redemption counting is implemented.'
