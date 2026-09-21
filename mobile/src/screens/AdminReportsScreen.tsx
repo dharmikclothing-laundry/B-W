@@ -8,6 +8,7 @@ const initial = {from: new Date(today.getTime() - 29 * 86400000).toISOString().s
   to: today.toISOString().slice(0, 10), source: 'all', q: '', limit: 50, offset: 0};
 const money = (value: number) => `₹${value.toFixed(2)}`;
 const label = (value: string) => value.replace(/_/g, ' ');
+const orderCount = (value: number) => `${value} ${value === 1 ? 'order' : 'orders'}`;
 const sources = ['all', 'staff', 'assignments', 'catalogue', 'issues', 'growth', 'financial'];
 
 export default function AdminReportsScreen({accessToken, onBack}: Props) {
@@ -58,7 +59,7 @@ export default function AdminReportsScreen({accessToken, onBack}: Props) {
         <Text>Claims opened {report.claims.created} · Refunds completed {report.refunds.completed}</Text></View>
       <Text style={styles.note}>{report.definitions.revenue} {report.definitions.orderValue}</Text>
       <Text style={styles.heading}>Order trends</Text>
-      {report.trend.length ? report.trend.map(item => <View key={item.date} style={styles.trendRow}><View><Text style={styles.bold}>{item.date}</Text><Text>{item.orders} orders · {money(item.orderValue)} order value</Text></View><Text style={styles.trendValue}>{money(item.captured)} captured{item.refunded ? ` · ${money(item.refunded)} refunded` : ''}</Text></View>) : <Text>No activity in this period.</Text>}
+      {report.trend.length ? report.trend.map(item => <View key={item.date} style={styles.trendRow}><View><Text style={styles.bold}>{item.date}</Text><Text>{orderCount(item.orders)} · {money(item.orderValue)} order value</Text></View><Text style={styles.trendValue}>{money(item.captured)} captured{item.refunded ? ` · ${money(item.refunded)} refunded` : ''}</Text></View>) : <Text>No activity in this period.</Text>}
       <Text style={styles.heading}>Drivers and facilities</Text>
       <View style={styles.card}><Text>Driver jobs assigned {report.drivers.assigned} · Completed {report.drivers.completed}</Text>
         <Text>Facility receipts {report.facilities.received} · Processing stages completed {report.facilities.completedStages}</Text>

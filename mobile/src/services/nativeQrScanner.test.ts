@@ -17,3 +17,10 @@ test('rejects unrelated QR values', async () => {
   scan.mockResolvedValue({format: 'qr', value: 'https://example.com'});
   await expect(scanOrderQr()).rejects.toThrow('valid B&W order QR');
 });
+
+test('replaces native scanner failures with a safe manual-entry fallback', async () => {
+  scan.mockRejectedValue(new Error('java.lang.RuntimeException: INTERNAL_ERROR (8)'));
+  await expect(scanOrderQr()).rejects.toThrow(
+    'QR scanner is unavailable on this device. Enter the handoff code instead.',
+  );
+});

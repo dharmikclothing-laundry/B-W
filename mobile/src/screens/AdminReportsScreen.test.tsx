@@ -38,7 +38,7 @@ test('renders revenue, trends, operations, growth and Admin audit history', asyn
   expect(view.getByText(/Coupon uses 1/)).toBeTruthy();
   expect(view.getByText('staff · deactivate')).toBeTruthy();
   expect(view.getByText('2026-09-10')).toBeTruthy();
-  expect(view.getByText(/1 orders/)).toBeTruthy();
+  expect(view.getByText(/1 order ·/)).toBeTruthy();
 });
 
 test('applies date and audit filters, and pages search results', async () => {
