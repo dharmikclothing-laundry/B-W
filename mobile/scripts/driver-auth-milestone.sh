@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+BACKEND="$ROOT/backend"
+MOBILE="$ROOT/mobile"
+REPORT_DIR="$ROOT/reports/milestones"
+LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/bw-7a.XXXXXX")"
+REPORT="$REPORT_DIR/7A-DRIVER-AUTH-PROFILE-$(date +%Y%m%d-%H%M%S).md"
+PASS=0
+FAIL=0
+API_PID=''
+CHECKPOINT='NOT CREATED'
+mkdir -p "$REPORT_DIR"
+chmod 700 "$LOG_DIR" "$REPORT_DIR"
+
+note() { printf '%s\n' "$*" | tee -a "$REPORT"; }
+gate() {
+  local label="$1" directory="$2"; shift 2
+  local output="$LOG_DIR/gate-$((PASS+FAIL+1)).log"
+  note "- Command: cd $directory && $*"
+  if (cd "$directory" && "$@") >"$output" 2>&1; then
+    note "  - PASS: $label"
+    PASS=$((PASS+1))
+    if [[ "$label" == 'fictional Admin-provisioned Driver acceptance' ]]; then
+      rg '^PASS:' "$output" | sed 's/^/    - /' >>"$REPORT" || true
+    fi
+  else
+    note "  - FAIL: $label (private log: $output)"
+    FAIL=$((FAIL+1))
+    rg '^FAIL:' "$output" | sed 's/^/    - /' >>"$REPORT" || true
+  fi
+}
+finish() {
+  local result='INCOMPLETE'
+  if [[ "$FAIL" -eq 0 && "$CHECKPOINT" == 'CREATED' ]]; then result='COMPLETE'; fi
+  note ''
+  note "Status: $result"
+  note "Automated gates: $PASS passed, $FAIL failed"
+  if [[ "$CHECKPOINT" == 'CREATED' ]]; then
+    note "Backend checkpoint: $(git -C "$BACKEND" rev-parse --short HEAD)"
+    note "Mobile checkpoint: $(git -C "$MOBILE" rev-parse --short HEAD)"
+  else
+    note 'Backend checkpoint: NOT CREATED'
+    note 'Mobile checkpoint: NOT CREATED'
+  fi
+  note 'Production services touched: NO'
+  note 'Secrets committed: NO'
+  note "Report: $REPORT"
+}
+cleanup() {
+  if [[ -n "$API_PID" ]]; then kill "$API_PID" 2>/dev/null || true; wait "$API_PID" 2>/dev/null || true; fi
+}
+trap cleanup EXIT
+
+printf '# 7A Driver authentication and profile\n\nRun: %s\n\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" >"$REPORT"
+note '## Preflight and safety'
+gate 'local/mock providers only' "$MOBILE" python3 scripts/qa-release-audit.py local-safety
+gate 'baseline commits, changed-file allowlist, and diff integrity' "$MOBILE" python3 scripts/qa-7a-worktree.py verify
+if (( FAIL > 0 )); then finish; exit 1; fi
+note ''
+note '## Changed files'
+python3 "$MOBILE/scripts/qa-7a-worktree.py" verify | rg '^(backend|mobile): ' | sed 's/^/- /' >>"$REPORT"
+
+export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home}"
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
+GRADLE="$HOME/.gradle/manual/gradle-9.4.1/bin/gradle"
+if [[ ! -x "$GRADLE" ]]; then
+  GRADLE="$(find "$HOME/.gradle/wrapper/dists/gradle-9.4.1-bin" -path '*/gradle-9.4.1/bin/gradle' -type f -print -quit 2>/dev/null || true)"
+fi
+
+note ''
+note '## Local database and security'
+gate 'local Supabase readiness and migration' "$BACKEND" bash -c './node_modules/.bin/supabase status && ./node_modules/.bin/supabase migration up --local --yes'
+gate 'staff trigger and self-reactivation SQL tests' "$BACKEND" ./node_modules/.bin/supabase test db --local supabase/tests/7a_staff_account_safety.sql
+gate 'no high-confidence secrets in source files' "$MOBILE" python3 scripts/qa-release-audit.py secrets
+gate 'automation script syntax' "$ROOT" bash -c 'bash -n bw mobile/scripts/driver-auth-milestone.sh && node --check backend/scripts/7a-functional-acceptance.cjs'
+
+note ''
+note '## Regression and builds'
+gate 'backend targeted 7A tests' "$BACKEND" npm test -- --runInBand --watchman=false auth.service.spec.ts staff.service.spec.ts
+gate 'mobile targeted Driver profile tests' "$MOBILE" npm test -- --runInBand --watch=false --watchman=false --silent driverProfile
+gate 'backend full regression' "$BACKEND" npm test -- --runInBand --watchman=false
+gate 'mobile full regression' "$MOBILE" npm test -- --runInBand --watch=false --watchman=false --silent
+gate 'backend build' "$BACKEND" npm run build
+gate 'backend strict ESLint' "$BACKEND" ./node_modules/.bin/eslint src test --max-warnings=0
+gate 'mobile TypeScript' "$MOBILE" ./node_modules/.bin/tsc --noEmit
+gate 'mobile strict ESLint' "$MOBILE" ./node_modules/.bin/eslint . --max-warnings=0
+gate 'Android debug build with local Gradle 9.4.1' "$MOBILE/android" "$GRADLE" :app:assembleDebug --offline --no-daemon
+gate 'iOS signed Development build' "$MOBILE/ios" bash -c 'xcodebuild -quiet -workspace BrightWhiteMobile.xcworkspace -scheme BrightWhiteMobile -configuration Debug -sdk iphoneos -destination "generic/platform=iOS" -derivedDataPath "$1" DEVELOPMENT_TEAM=97J7DWSN8Y CODE_SIGNING_ALLOWED=YES build && test -f "$1/Build/Products/Debug-iphoneos/BrightWhiteMobile.app/embedded.mobileprovision" && codesign -dv "$1/Build/Products/Debug-iphoneos/BrightWhiteMobile.app"' _ "$LOG_DIR/ios-derived"
+
+if (( FAIL == 0 )); then
+  note ''
+  note '## Functional acceptance'
+  if lsof -tiTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
+    note '- FAIL: local acceptance port 3001 is already occupied'
+    FAIL=$((FAIL+1))
+  else
+    (cd "$BACKEND" && exec env PORT=3001 node dist/main.js) >"$LOG_DIR/local-api.log" 2>&1 &
+    API_PID=$!
+    gate 'local 7A API health' "$ROOT" bash -c 'for i in {1..30}; do curl -fsS --max-time 2 http://127.0.0.1:3001/v1/health >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'
+    if (( FAIL == 0 )); then
+      gate 'fictional Admin-provisioned Driver acceptance' "$BACKEND" node scripts/7a-functional-acceptance.cjs
+    fi
+  fi
+fi
+
+if (( FAIL == 0 )); then
+  note ''
+  note '## Final checkpoint'
+  gate 'final changed-file and diff review' "$MOBILE" python3 scripts/qa-7a-worktree.py verify
+  if (( FAIL == 0 )); then
+    gate 'checkpoint and clean Git trees' "$MOBILE" python3 scripts/qa-7a-worktree.py commit
+    if (( FAIL == 0 )); then CHECKPOINT='CREATED'; fi
+  fi
+fi
+finish
+(( FAIL == 0 ))

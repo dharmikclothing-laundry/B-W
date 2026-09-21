@@ -1,0 +1,1 @@
+import { IsNotEmpty, IsString, Matches } from 'class-validator'; export class PhoneDto { @IsString() @Matches(/^\+[1-9]\d{7,14}$/) phone!:string; } export class VerifyPhoneOtpDto extends PhoneDto { @IsString() @IsNotEmpty() token!:string; }

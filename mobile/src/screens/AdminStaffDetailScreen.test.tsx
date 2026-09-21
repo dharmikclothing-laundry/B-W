@@ -1,0 +1,35 @@
+import React from 'react';
+import {act, fireEvent, render, waitFor} from '@testing-library/react-native';
+import AdminStaffDetailScreen from './AdminStaffDetailScreen';
+import {activateAdminStaff, deactivateAdminStaff, getAdminStaff, listAdminFacilities, reassignAdminStaffFacility, revokeAdminStaffAccess} from '../services/adminStaffApi';
+jest.mock('../services/adminStaffApi', () => ({activateAdminStaff: jest.fn(), deactivateAdminStaff: jest.fn(), getAdminStaff: jest.fn(), listAdminFacilities: jest.fn(), reassignAdminStaffFacility: jest.fn(), revokeAdminStaffAccess: jest.fn()}));
+const load = getAdminStaff as jest.Mock;
+const facilities = listAdminFacilities as jest.Mock;
+const deactivate = deactivateAdminStaff as jest.Mock;
+const activate = activateAdminStaff as jest.Mock;
+const reassign = reassignAdminStaffFacility as jest.Mock;
+const revoke = revokeAdminStaffAccess as jest.Mock;
+const record = {staff: {id: 's1', profile_id: 'p1', role: 'manager', facility_id: 'f1', profiles: {full_name: 'Test Manager', phone: '+16505550178', is_active: true}, facilities: {name: 'Old Facility'}}, workload: [], audit: []};
+beforeEach(() => {jest.clearAllMocks(); load.mockResolvedValue(record); facilities.mockResolvedValue([{id: 'f1', name: 'Old Facility', is_active: true}, {id: 'f2', name: 'New Facility', is_active: true}]); deactivate.mockResolvedValue({}); activate.mockResolvedValue({}); reassign.mockResolvedValue({}); revoke.mockResolvedValue({});});
+test('shows role, Facility, workload and audited actions; can reassign', async () => {
+  const view = await render(<AdminStaffDetailScreen accessToken="t" profileId="p1" onBack={jest.fn()} />);
+  await waitFor(() => expect(view.getByText('Test Manager')).toBeTruthy());
+  expect(view.getByText('No assignments or Facility operations yet.')).toBeTruthy();
+  await act(async () => {fireEvent.press(view.getByText('Move to New Facility'));});
+  expect(reassign).toHaveBeenCalledWith('t', 'p1', 'f2');
+  expect(view.getByText('Facility reassigned.')).toBeTruthy();
+});
+test('deactivation and revoke call Admin controls; re-enable only when disabled', async () => {
+  const view = await render(<AdminStaffDetailScreen accessToken="t" profileId="p1" onBack={jest.fn()} />);
+  await waitFor(() => expect(view.getByText('Test Manager')).toBeTruthy());
+  await act(async () => {fireEvent.press(view.getByText('Deactivate staff'));});
+  expect(deactivate).toHaveBeenCalledWith('t', 'p1');
+  await act(async () => {fireEvent.press(view.getByText('Revoke access and require Admin re-enable'));});
+  expect(revoke).toHaveBeenCalledWith('t', 'p1');
+  view.unmount();
+  load.mockResolvedValueOnce({...record, staff: {...record.staff, profiles: {...record.staff.profiles, is_active: false}}});
+  const disabled = await render(<AdminStaffDetailScreen accessToken="t" profileId="p1" onBack={jest.fn()} />);
+  await waitFor(() => expect(disabled.getByText('Re-enable staff')).toBeTruthy());
+  await act(async () => {fireEvent.press(disabled.getByText('Re-enable staff'));});
+  expect(activate).toHaveBeenCalledWith('t', 'p1');
+});

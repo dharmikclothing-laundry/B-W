@@ -1,1 +1,18 @@
 reports/milestones/*.txt
+
+# Local archives
+backend.zip
+
+# Android generated builds
+mobile/android/app/build/
+mobile/android/.gradle/
+
+# Generated database/audit reports
+backend/database-audit/
+backend/database-operations-audit.txt
+backend/database-schema-columns.txt
+backend/database_schema_audit.txt
+backend/database_usage.txt
+backend/supabase_operations.txt
+backend/supabase_rpc_operations.txt
+backend/supabase_table_operations.txt

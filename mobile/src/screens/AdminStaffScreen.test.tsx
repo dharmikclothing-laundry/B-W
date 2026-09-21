@@ -1,0 +1,21 @@
+import React from 'react';
+import {act, fireEvent, render, waitFor} from '@testing-library/react-native';
+import AdminStaffScreen from './AdminStaffScreen';
+import {listAdminFacilities, listAdminStaff, provisionAdminStaff} from '../services/adminStaffApi';
+jest.mock('../services/adminStaffApi', () => ({listAdminFacilities: jest.fn(), listAdminStaff: jest.fn(), provisionAdminStaff: jest.fn()}));
+const list = listAdminStaff as jest.Mock;
+const facilities = listAdminFacilities as jest.Mock;
+const provision = provisionAdminStaff as jest.Mock;
+beforeEach(() => {list.mockReset().mockResolvedValue([{id: 'd1', profile_id: 'p1', role: 'driver', profiles: {full_name: 'Fictional Driver', is_active: true}, facilities: null}]); facilities.mockReset().mockResolvedValue([{id: 'f1', name: 'Test Facility', is_active: true}]); provision.mockReset().mockResolvedValue({profileId: 'new'});});
+test('Admin provisioning refreshes staff and shows success', async () => {
+  const view = await render(<AdminStaffScreen accessToken="t" onBack={jest.fn()} onStaff={jest.fn()} />);
+  await waitFor(() => expect(view.getByText('Fictional Driver')).toBeTruthy());
+  await act(async () => {fireEvent.changeText(view.getByLabelText('Staff name'), 'Test Driver');});
+  await act(async () => {fireEvent.changeText(view.getByLabelText('Staff phone'), '+16505550177');});
+  await waitFor(() => expect(view.getByLabelText('Staff name').props.value).toBe('Test Driver'));
+  await waitFor(() => expect(view.getByLabelText('Staff phone').props.value).toBe('+16505550177'));
+  await act(async () => {fireEvent.press(view.getByText('Create staff'));});
+  expect(provision).toHaveBeenCalledWith('t', {phone: '+16505550177', fullName: 'Test Driver', role: 'driver', facilityId: ''});
+  await waitFor(() => expect(view.getByText('Staff account created. Login uses the Development OTP.')).toBeTruthy());
+  view.unmount();
+});

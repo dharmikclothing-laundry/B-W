@@ -1,0 +1,22 @@
+import React from 'react';
+import {render, waitFor} from '@testing-library/react-native';
+import OrderDetailsScreen from './OrderDetailsScreen';
+import {getOrder, getOrderStatusHistory} from '../services/ordersApi';
+import {getMyAddresses} from '../services/customersApi';
+jest.mock('../services/ordersApi', () => ({getOrder: jest.fn(), getOrderStatusHistory: jest.fn()}));
+jest.mock('../services/customersApi', () => ({getMyAddresses: jest.fn()}));
+jest.mock('../components/OrderCareSection', () => () => null);
+jest.mock('../components/OrderQrCard', () => () => null);
+jest.mock('../services/orderTrackingApi', () => ({canCustomerTrackOrder: () => false, hasLiveDriverLocation: () => false}));
+const order = {id: 'order', order_number: 'BW-123', current_status: 'pickup_accepted', payment_method: null, order_items: [], pickup_address_id: 'private-address-id', delivery_address_id: 'private-address-id', total_amount: 0};
+test('nullable payment method does not crash details and opaque address/provider ids are not rendered', async () => {
+  (getOrder as jest.Mock).mockResolvedValue(order);
+  (getOrderStatusHistory as jest.Mock).mockResolvedValue([{id: 'history', new_status: 'confirmed', created_at: '2026-09-21T00:00:00Z', reason: 'Provider payment captured (mock_payment_private)'}]);
+  (getMyAddresses as jest.Mock).mockResolvedValue([{id: 'private-address-id', address_line1: 'Road 12', city: 'Hyderabad'}]);
+  const view = await render(<OrderDetailsScreen accessToken="token" orderId="order" onBack={jest.fn()} onReceipt={jest.fn()} onReorder={jest.fn()} />);
+  await waitFor(() => expect(view.getByText('Not recorded')).toBeTruthy());
+  expect(view.getAllByText('Road 12, Hyderabad')).toHaveLength(2);
+  expect(view.getByText('Payment received')).toBeTruthy();
+  expect(view.queryByText('private-address-id')).toBeNull();
+  expect(view.queryByText(/mock_payment_private/)).toBeNull();
+});

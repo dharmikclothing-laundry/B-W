@@ -1,0 +1,1 @@
+import { IsNumber,IsOptional,IsString,IsUUID } from 'class-validator';export class ScanQrDto{@IsUUID()token!:string;@IsString()action!:string;@IsOptional()@IsNumber()latitude?:number;@IsOptional()@IsNumber()longitude?:number}

@@ -1,0 +1,1 @@
+import {Module}from'@nestjs/common';import{SupabaseModule}from'../supabase/supabase.module';import{GrowthService}from'./growth.service';import{GrowthController}from'./growth.controller';@Module({imports:[SupabaseModule],providers:[GrowthService],controllers:[GrowthController],exports:[GrowthService]})export class GrowthModule{}

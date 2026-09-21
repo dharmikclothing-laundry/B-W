@@ -1,0 +1,1 @@
+import { Module } from '@nestjs/common'; import { RbacController } from './rbac.controller'; import { RolesGuard } from '../../common/guards/roles.guard'; import { PermissionsGuard } from '../../common/guards/permissions.guard'; @Module({controllers:[RbacController],providers:[RolesGuard,PermissionsGuard],exports:[RolesGuard,PermissionsGuard]}) export class RbacModule{}

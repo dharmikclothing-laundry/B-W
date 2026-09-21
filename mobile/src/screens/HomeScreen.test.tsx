@@ -1,0 +1,39 @@
+import React from 'react';
+import {fireEvent, render} from '@testing-library/react-native';
+import HomeScreen from './HomeScreen';
+import type {ServiceItem} from '../types/service';
+const services: ServiceItem[] = [
+  {id: 'shirt', categoryId: 'wash', categoryName: 'Wash & Iron', name: 'Shirt', description: 'Clean and pressed', pricingUnit: 'piece', price: 40, facilityId: null},
+  {id: 'coat', categoryId: 'dry', categoryName: 'Dry Cleaning', name: 'Coat', description: null, pricingUnit: 'piece', price: 180, facilityId: null},
+];
+const base = {servicesLoading: false, servicesError: '', services, categories: [{id: 'wash', name: 'Wash & Iron', count: 1}, {id: 'dry', name: 'Dry Cleaning', count: 1}], addresses: [{id: 'address', label: 'Home', address_line1: 'Banjara Hills', address_line2: null, city: 'Hyderabad', state: 'Telangana', postal_code: '500034', latitude: null, longitude: null, is_default: true}], selectedAddressId: 'address', cartItemCount: 0, getQuantity: () => 0, onSelectAddress: jest.fn(), onManageAddresses: jest.fn(), onOpenCart: jest.fn(), onOpenNotifications: jest.fn(), onRetryServices: jest.fn(), onUpdateQuantity: jest.fn()};
+describe('customer Home catalogue', () => {
+  beforeEach(() => jest.clearAllMocks());
+  it('shows categories but waits for category selection before showing items', async () => {const view = await render(<HomeScreen {...base} />); expect(view.getByText('Wash & Iron')).toBeTruthy(); expect(view.queryByText('Shirt')).toBeNull(); await fireEvent.press(view.getByText('Wash & Iron')); expect(view.getByText('Shirt')).toBeTruthy(); expect(view.queryByText('Coat')).toBeNull();});
+  it('shows the selected category services and preserves cart actions', async () => {const view = await render(<HomeScreen {...base} />); await fireEvent.press(view.getByText('Dry Cleaning')); await fireEvent.press(view.getByLabelText('Add Coat')); expect(base.onUpdateQuantity).toHaveBeenCalledWith(services[1], 1);});
+  it('shows delivery address and contains no internal labels', async () => {const view = await render(<HomeScreen {...base} />); expect(view.getByLabelText('Choose delivery address')).toBeTruthy(); const content = JSON.stringify(view.toJSON()).toLowerCase(); ['fictional', 'fixture', 'development test mode', 'mock location', '9e'].forEach(label => expect(content).not.toContain(label));});
+  it('renders error retry and empty catalogue states', async () => {const errorView = await render(<HomeScreen {...base} services={[]} categories={[]} servicesError="Unable to load services" />); await fireEvent.press(errorView.getByText('Try again')); expect(base.onRetryServices).toHaveBeenCalled(); await errorView.unmount(); const emptyView = await render(<HomeScreen {...base} services={[]} categories={[]} />); expect(emptyView.getByText('No services are available right now.')).toBeTruthy();});
+});
+
+test('has no search field and keeps loading and empty states clear', async () => {
+  const view = await render(<HomeScreen {...base} services={[]} categories={[]} servicesLoading />);
+  expect(view.queryByLabelText('Search services')).toBeNull();
+  expect(view.queryByLabelText('Choose service category')).toBeNull();
+  expect(view.queryByText('No services are available right now.')).toBeNull();
+  expect(view.getByLabelText('Loading services')).toBeTruthy();
+});
+
+test('renders every category without a horizontally scrolling selector', async () => {
+  const categories = Array.from({length: 9}, (_, index) => ({id: `category-${index}`, name: `Category ${index + 1}`, count: index + 1}));
+  const view = await render(<HomeScreen {...base} categories={categories} />);
+  categories.forEach(category => expect(view.getByText(category.name)).toBeTruthy());
+  expect(view.queryByLabelText('Search services')).toBeNull();
+});
+
+test('address selection uses the server address and updates the selected id', async () => {
+  const view = await render(<HomeScreen {...base} />);
+  await fireEvent.press(view.getByLabelText('Choose delivery address'));
+  expect(view.getByText('Banjara Hills')).toBeTruthy();
+  await fireEvent.press(view.getByText('Banjara Hills'));
+  expect(base.onSelectAddress).toHaveBeenCalledWith('address');
+});

@@ -1,0 +1,1 @@
+import { Module } from '@nestjs/common';import { QrController } from './qr.controller';import { QrService } from './qr.service';import { SupabaseModule } from '../supabase/supabase.module';import {QrAccessGuard} from './qr-access.guard';@Module({imports:[SupabaseModule],controllers:[QrController],providers:[QrService,QrAccessGuard]})export class QrModule{}

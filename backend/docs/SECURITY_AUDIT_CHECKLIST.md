@@ -1,0 +1,14 @@
+# Security Audit Checklist
+- [ ] No Supabase service role key in React Native application.
+- [ ] No Razorpay secret in mobile application.
+- [ ] OTP request and verification rate limits enforced.
+- [ ] Webhooks verify signatures and reject replay.
+- [ ] Admin/facility/driver/customer authorization tested for every sensitive API.
+- [ ] SQL RLS policies tested with real JWTs.
+- [ ] Redis locks protect assignment, payment and refund races.
+- [ ] Signed upload URLs have short expiration.
+- [ ] Delivery photographs use private storage.
+- [ ] Logs redact tokens and payment secrets.
+- [ ] HTTPS enforced.
+- [ ] Dependency vulnerability scanning enabled.
+- [ ] Penetration test completed before production.

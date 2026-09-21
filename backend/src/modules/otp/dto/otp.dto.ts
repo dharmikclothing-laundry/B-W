@@ -1,0 +1,1 @@
+import { IsIn,IsString,Length } from 'class-validator';export class CreateOrderOtpDto{@IsIn(['pickup','delivery'])otpType!:string}export class VerifyOrderOtpDto extends CreateOrderOtpDto{@IsString()@Length(4,10)otp!:string}
