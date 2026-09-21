@@ -4,19 +4,21 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
-} from '@nestjs/common';
-import { createHash, createHmac, timingSafeEqual } from 'crypto';
+} from "@nestjs/common";
+import { createHash, createHmac, timingSafeEqual } from "crypto";
 
-import { SupabaseService } from '../supabase/supabase.service';
+import { SupabaseService } from "../supabase/supabase.service";
+import { LogisticsService } from "../logistics/logistics.service";
 import {
   isDevelopmentPaymentProvider,
   PAYMENT_PROVIDER,
   PaymentProvider,
   ProviderPayment,
   ProviderRefund,
-} from './providers/payment.provider';
+} from "./providers/payment.provider";
 
 type VerifyPaymentInput = {
   razorpayOrderId: string;
@@ -56,30 +58,44 @@ const UUID_PATTERN =
 
 @Injectable()
 export class PaymentsService {
+  private readonly logger = new Logger(PaymentsService.name);
+
   constructor(
     private readonly supabase: SupabaseService,
     @Inject(PAYMENT_PROVIDER)
     private readonly provider: PaymentProvider,
+    private readonly logistics?: LogisticsService,
   ) {}
+
+  private async triggerPickupAssignment(orderId: string) {
+    if (!this.logistics) return;
+    try {
+      await this.logistics.assignBestDriver(orderId, "pickup");
+    } catch (error) {
+      this.logger.warn(
+        `Automatic pickup assignment failed for order ${orderId}: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+    }
+  }
 
   private db() {
     return this.supabase.admin;
   }
 
   private providerName() {
-    return this.provider.mode === 'mock' ? 'mock' : 'razorpay';
+    return this.provider.mode === "mock" ? "mock" : "razorpay";
   }
 
   private throwDatabaseError(error: DatabaseError, fallback: string): never {
-    if (error.code === 'P0002') {
+    if (error.code === "P0002") {
       throw new NotFoundException(error.message ?? fallback);
     }
 
-    if (error.code === '42501') {
+    if (error.code === "42501") {
       throw new ForbiddenException(error.message ?? fallback);
     }
 
-    if (['23505', '23514', '40001'].includes(error.code ?? '')) {
+    if (["23505", "23514", "40001"].includes(error.code ?? "")) {
       throw new ConflictException(error.message ?? fallback);
     }
 
@@ -98,7 +114,7 @@ export class PaymentsService {
     });
 
     if (!verified) {
-      throw new BadRequestException('Invalid Razorpay signature');
+      throw new BadRequestException("Invalid Razorpay signature");
     }
 
     return { verified: true };
@@ -110,7 +126,7 @@ export class PaymentsService {
       razorpayOrderId: paymentOrder.provider_order_id,
       providerOrderId: paymentOrder.provider_order_id,
       amount: Math.round(Number(paymentOrder.amount) * 100),
-      currency: paymentOrder.currency || 'INR',
+      currency: paymentOrder.currency || "INR",
       keyId: this.provider.publicKeyId,
       provider: this.providerName(),
     };
@@ -118,30 +134,30 @@ export class PaymentsService {
 
   private async requireOwnedOrder(profileId: string, orderId: string) {
     const { data: order, error: orderError } = await this.db()
-      .from('orders')
+      .from("orders")
       .select(
-        'id,total_amount,currency,customer_id,payment_method,current_status',
+        "id,total_amount,currency,customer_id,payment_method,current_status",
       )
-      .eq('id', orderId)
+      .eq("id", orderId)
       .maybeSingle();
 
     if (orderError || !order) {
-      throw new NotFoundException('Order not found');
+      throw new NotFoundException("Order not found");
     }
 
     const { data: customer, error: customerError } = await this.db()
-      .from('customers')
-      .select('id')
-      .eq('id', order.customer_id)
-      .eq('profile_id', profileId)
+      .from("customers")
+      .select("id")
+      .eq("id", order.customer_id)
+      .eq("profile_id", profileId)
       .maybeSingle();
 
     if (customerError) {
-      throw new BadRequestException('Unable to validate order ownership');
+      throw new BadRequestException("Unable to validate order ownership");
     }
 
     if (!customer) {
-      throw new ForbiddenException('Order belongs to another customer');
+      throw new ForbiddenException("Order belongs to another customer");
     }
 
     return order;
@@ -149,11 +165,11 @@ export class PaymentsService {
 
   private async activePaymentOrder(orderId: string) {
     const { data, error } = await this.db()
-      .from('payment_orders')
-      .select('*')
-      .eq('order_id', orderId)
-      .in('status', ['created', 'authorized', 'paid'])
-      .order('created_at', { ascending: false })
+      .from("payment_orders")
+      .select("*")
+      .eq("order_id", orderId)
+      .in("status", ["created", "authorized", "paid"])
+      .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
@@ -168,10 +184,10 @@ export class PaymentsService {
     const order = await this.requireOwnedOrder(profileId, orderId);
 
     if (
-      order.payment_method !== 'razorpay' ||
-      order.current_status !== 'pending_payment'
+      order.payment_method !== "razorpay" ||
+      order.current_status !== "pending_payment"
     ) {
-      throw new ConflictException('Order is not awaiting a Razorpay payment');
+      throw new ConflictException("Order is not awaiting a Razorpay payment");
     }
 
     const existing = await this.activePaymentOrder(orderId);
@@ -183,10 +199,10 @@ export class PaymentsService {
     }
 
     const amountPaise = Math.round(Number(order.total_amount) * 100);
-    const currency = order.currency || 'INR';
+    const currency = order.currency || "INR";
 
     if (!Number.isSafeInteger(amountPaise) || amountPaise <= 0) {
-      throw new BadRequestException('Order total is not payable');
+      throw new BadRequestException("Order total is not payable");
     }
 
     const providerOrder = await this.provider.createOrder({
@@ -200,25 +216,25 @@ export class PaymentsService {
       providerOrder.currency !== currency
     ) {
       throw new ServiceUnavailableException(
-        'Payment provider returned inconsistent order details',
+        "Payment provider returned inconsistent order details",
       );
     }
 
     const { data, error: insertError } = await this.db()
-      .from('payment_orders')
+      .from("payment_orders")
       .insert({
         order_id: orderId,
         provider: this.providerName(),
         provider_order_id: providerOrder.id,
         amount: Number(order.total_amount),
         currency,
-        status: 'created',
+        status: "created",
       })
       .select()
       .single();
 
     if (insertError || !data) {
-      if (insertError?.code === '23505') {
+      if (insertError?.code === "23505") {
         const concurrent = await this.activePaymentOrder(orderId);
         if (concurrent) {
           return {
@@ -230,7 +246,7 @@ export class PaymentsService {
 
       this.throwDatabaseError(
         insertError ?? {},
-        'Unable to save payment order',
+        "Unable to save payment order",
       );
     }
 
@@ -241,17 +257,17 @@ export class PaymentsService {
     const order = await this.requireOwnedOrder(profileId, orderId);
 
     const { data: payment, error: paymentError } = await this.db()
-      .from('payment_orders')
+      .from("payment_orders")
       .select(
-        'id,order_id,provider,provider_order_id,amount,currency,status,paid_at,created_at,updated_at',
+        "id,order_id,provider,provider_order_id,amount,currency,status,paid_at,created_at,updated_at",
       )
-      .eq('order_id', orderId)
-      .order('created_at', { ascending: false })
+      .eq("order_id", orderId)
+      .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
     if (paymentError) {
-      throw new BadRequestException('Unable to load payment status');
+      throw new BadRequestException("Unable to load payment status");
     }
 
     if (!payment) {
@@ -259,34 +275,48 @@ export class PaymentsService {
         orderId,
         payment: null,
         refunds: [],
-        refundEligibility: {eligible: false, remainingAmount: 0},
+        refundEligibility: { eligible: false, remainingAmount: 0 },
       };
     }
 
     const { data: refunds, error: refundsError } = await this.db()
-      .from('refund_requests')
+      .from("refund_requests")
       .select(
-        'id,amount,reason,status,is_cancellation_refund,approved_at,processed_at,created_at',
+        "id,amount,reason,status,is_cancellation_refund,approved_at,processed_at,created_at",
       )
-      .eq('payment_order_id', payment.id)
-      .order('created_at', { ascending: false });
+      .eq("payment_order_id", payment.id)
+      .order("created_at", { ascending: false });
 
     if (refundsError) {
-      throw new BadRequestException('Unable to load refund status');
+      throw new BadRequestException("Unable to load refund status");
     }
 
     const providerMatchesRuntime = payment.provider === this.providerName();
     const canResume =
-      providerMatchesRuntime && ['created', 'authorized'].includes(payment.status);
+      providerMatchesRuntime &&
+      ["created", "authorized"].includes(payment.status);
 
     const refundRows = refunds ?? [];
-    const committed = refundRows.filter((refund: any) =>
-      ['requested', 'under_review', 'approved', 'processing', 'completed'].includes(refund.status))
+    const committed = refundRows
+      .filter((refund: any) =>
+        [
+          "requested",
+          "under_review",
+          "approved",
+          "processing",
+          "completed",
+        ].includes(refund.status),
+      )
       .reduce((total: number, refund: any) => total + Number(refund.amount), 0);
     const remainingAmount = Math.max(0, Number(payment.amount) - committed);
-    const lifecycleEligible = ['cancelled', 'claim_period_active'].includes(order.current_status);
-    const refundEligible = ['paid', 'partially_refunded'].includes(payment.status) &&
-      Boolean(payment.provider_order_id) && lifecycleEligible && remainingAmount > 0;
+    const lifecycleEligible = ["cancelled", "claim_period_active"].includes(
+      order.current_status,
+    );
+    const refundEligible =
+      ["paid", "partially_refunded"].includes(payment.status) &&
+      Boolean(payment.provider_order_id) &&
+      lifecycleEligible &&
+      remainingAmount > 0;
 
     return {
       orderId,
@@ -303,7 +333,7 @@ export class PaymentsService {
         updatedAt: payment.updated_at,
         canResume,
         keyId:
-          canResume && payment.provider === 'razorpay'
+          canResume && payment.provider === "razorpay"
             ? this.provider.publicKeyId
             : null,
       },
@@ -317,7 +347,7 @@ export class PaymentsService {
         processedAt: refund.processed_at,
         createdAt: refund.created_at,
       })),
-      refundEligibility: {eligible: refundEligible, remainingAmount},
+      refundEligibility: { eligible: refundEligible, remainingAmount },
     };
   }
 
@@ -327,7 +357,7 @@ export class PaymentsService {
     actorProfileId: string | null,
   ) {
     const { data, error } = await this.db().rpc(
-      'record_captured_payment_atomic',
+      "record_captured_payment_atomic",
       {
         p_payment_order_id: paymentOrder.id,
         p_provider_payment_id: payment.id,
@@ -342,7 +372,7 @@ export class PaymentsService {
     );
 
     if (error || !data) {
-      this.throwDatabaseError(error ?? {}, 'Unable to confirm payment');
+      this.throwDatabaseError(error ?? {}, "Unable to confirm payment");
     }
 
     return data as {
@@ -357,7 +387,7 @@ export class PaymentsService {
     payment: ProviderPayment,
   ) {
     const { data, error } = await this.db().rpc(
-      'record_failed_payment_atomic',
+      "record_failed_payment_atomic",
       {
         p_payment_order_id: paymentOrder.id,
         p_provider_payment_id: payment.id,
@@ -371,7 +401,7 @@ export class PaymentsService {
     );
 
     if (error || !data) {
-      this.throwDatabaseError(error ?? {}, 'Unable to record failed payment');
+      this.throwDatabaseError(error ?? {}, "Unable to record failed payment");
     }
 
     return data as {
@@ -392,7 +422,7 @@ export class PaymentsService {
       payment.currency !== paymentOrder.currency
     ) {
       throw new ConflictException(
-        'Provider payment does not match the payment order',
+        "Provider payment does not match the payment order",
       );
     }
   }
@@ -400,7 +430,7 @@ export class PaymentsService {
   private ensureMatchingRefund(
     expected: Pick<
       RefundClaim,
-      'refundId' | 'providerPaymentId' | 'amount' | 'currency'
+      "refundId" | "providerPaymentId" | "amount" | "currency"
     >,
     refund: ProviderRefund,
   ) {
@@ -409,10 +439,10 @@ export class PaymentsService {
       Number(refund.amount) !== Math.round(Number(expected.amount) * 100) ||
       refund.currency !== expected.currency ||
       (refund.reference !== null && refund.reference !== expected.refundId) ||
-      !['pending', 'processed', 'failed'].includes(refund.status)
+      !["pending", "processed", "failed"].includes(refund.status)
     ) {
       throw new ConflictException(
-        'Provider refund does not match the approved refund',
+        "Provider refund does not match the approved refund",
       );
     }
   }
@@ -421,7 +451,7 @@ export class PaymentsService {
     refundId: string,
     providerRefundId: string | null,
   ) {
-    await this.db().rpc('mark_refund_provider_uncertain_atomic', {
+    await this.db().rpc("mark_refund_provider_uncertain_atomic", {
       p_refund_id: refundId,
       p_provider_refund_id: providerRefundId,
     });
@@ -432,7 +462,7 @@ export class PaymentsService {
     providerRefund: ProviderRefund,
   ) {
     const { data, error } = await this.db().rpc(
-      'record_provider_refund_atomic',
+      "record_provider_refund_atomic",
       {
         p_refund_id: refundId,
         p_provider_refund_id: providerRefund.id,
@@ -448,7 +478,7 @@ export class PaymentsService {
     );
 
     if (error || !data) {
-      this.throwDatabaseError(error ?? {}, 'Unable to record refund');
+      this.throwDatabaseError(error ?? {}, "Unable to record refund");
     }
 
     return data as {
@@ -469,7 +499,7 @@ export class PaymentsService {
         });
 
     if (!providerRefund) {
-      throw new ConflictException('Refund provider reconciliation is pending');
+      throw new ConflictException("Refund provider reconciliation is pending");
     }
 
     this.ensureMatchingRefund(claim, providerRefund);
@@ -484,23 +514,23 @@ export class PaymentsService {
     );
 
     const { data: paymentOrder, error } = await this.db()
-      .from('payment_orders')
-      .select('*')
-      .eq('provider_order_id', body.razorpayOrderId)
+      .from("payment_orders")
+      .select("*")
+      .eq("provider_order_id", body.razorpayOrderId)
       .maybeSingle();
 
     if (error || !paymentOrder) {
-      throw new NotFoundException('Payment order not found');
+      throw new NotFoundException("Payment order not found");
     }
 
     await this.requireOwnedOrder(profileId, paymentOrder.order_id);
 
     if (
-      paymentOrder.status === 'paid' &&
+      paymentOrder.status === "paid" &&
       paymentOrder.provider_payment_id !== body.razorpayPaymentId
     ) {
       throw new ConflictException(
-        'Payment order is already paid by another payment',
+        "Payment order is already paid by another payment",
       );
     }
 
@@ -509,9 +539,9 @@ export class PaymentsService {
     );
     this.ensureMatchingPayment(paymentOrder, providerPayment);
 
-    if (providerPayment.status !== 'captured') {
+    if (providerPayment.status !== "captured") {
       throw new ConflictException(
-        'Provider payment is not in the captured state',
+        "Provider payment is not in the captured state",
       );
     }
 
@@ -520,6 +550,10 @@ export class PaymentsService {
       providerPayment,
       profileId,
     );
+
+    if (result.orderStatus === "confirmed") {
+      await this.triggerPickupAssignment(result.orderId);
+    }
 
     return {
       verified: true,
@@ -533,28 +567,28 @@ export class PaymentsService {
   async simulateMockPayment(
     profileId: string,
     paymentOrderId: string,
-    status: 'captured' | 'failed',
+    status: "captured" | "failed",
   ) {
     if (
-      process.env.NODE_ENV === 'production' ||
+      process.env.NODE_ENV === "production" ||
       !isDevelopmentPaymentProvider(this.provider)
     ) {
-      throw new NotFoundException('Mock payment simulation is unavailable');
+      throw new NotFoundException("Mock payment simulation is unavailable");
     }
 
     const { data: paymentOrder, error } = await this.db()
-      .from('payment_orders')
-      .select('*')
-      .eq('id', paymentOrderId)
+      .from("payment_orders")
+      .select("*")
+      .eq("id", paymentOrderId)
       .maybeSingle();
 
     if (error || !paymentOrder) {
-      throw new NotFoundException('Payment order not found');
+      throw new NotFoundException("Payment order not found");
     }
 
     await this.requireOwnedOrder(profileId, paymentOrder.order_id);
 
-    if (!['created', 'authorized'].includes(paymentOrder.status)) {
+    if (!["created", "authorized"].includes(paymentOrder.status)) {
       throw new ConflictException(
         `Mock payment cannot be simulated while it is ${paymentOrder.status}`,
       );
@@ -570,9 +604,8 @@ export class PaymentsService {
     this.ensureMatchingPayment(paymentOrder, simulation.payment);
 
     let databaseResult:
-      | { orderId: string; orderStatus: string; duplicate: boolean }
-      | undefined;
-    if (status === 'failed') {
+      { orderId: string; orderStatus: string; duplicate: boolean } | undefined;
+    if (status === "failed") {
       databaseResult = await this.recordFailedPayment(
         paymentOrder,
         simulation.payment,
@@ -584,7 +617,7 @@ export class PaymentsService {
       razorpayOrderId: paymentOrder.provider_order_id,
       razorpayPaymentId: simulation.payment.id,
       razorpaySignature: simulation.signature,
-      provider: 'mock',
+      provider: "mock",
       status: simulation.payment.status,
       duplicate: databaseResult?.duplicate ?? false,
       orderStatus: databaseResult?.orderStatus,
@@ -596,33 +629,36 @@ export class PaymentsService {
 
     if (!secret) {
       throw new ServiceUnavailableException(
-        'Razorpay webhook is not configured',
+        "Razorpay webhook is not configured",
       );
     }
 
     if (!Buffer.isBuffer(rawBody)) {
-      throw new BadRequestException('Missing webhook body');
+      throw new BadRequestException("Missing webhook body");
     }
 
     const expected = Buffer.from(
-      createHmac('sha256', secret).update(rawBody).digest('hex'),
-      'hex',
+      createHmac("sha256", secret).update(rawBody).digest("hex"),
+      "hex",
     );
     const actual =
-      typeof signature === 'string' && /^[a-f0-9]{64}$/i.test(signature)
-        ? Buffer.from(signature, 'hex')
+      typeof signature === "string" && /^[a-f0-9]{64}$/i.test(signature)
+        ? Buffer.from(signature, "hex")
         : Buffer.alloc(0);
 
-    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
-      throw new BadRequestException('Invalid webhook signature');
+    if (
+      expected.length !== actual.length ||
+      !timingSafeEqual(expected, actual)
+    ) {
+      throw new BadRequestException("Invalid webhook signature");
     }
   }
 
   private async findPaymentOrder(providerOrderId: string) {
     const { data, error } = await this.db()
-      .from('payment_orders')
-      .select('*')
-      .eq('provider_order_id', providerOrderId)
+      .from("payment_orders")
+      .select("*")
+      .eq("provider_order_id", providerOrderId)
       .maybeSingle();
 
     if (error) {
@@ -636,11 +672,11 @@ export class PaymentsService {
     const payment = event.payload?.payment?.entity;
 
     if (!payment?.id || !payment?.order_id) {
-      throw new BadRequestException('Incomplete payment webhook');
+      throw new BadRequestException("Incomplete payment webhook");
     }
 
-    if (!['captured', 'failed'].includes(payment.status)) {
-      throw new ConflictException('Webhook payment state is not supported');
+    if (!["captured", "failed"].includes(payment.status)) {
+      throw new ConflictException("Webhook payment state is not supported");
     }
 
     const paymentOrder = await this.findPaymentOrder(payment.order_id);
@@ -657,8 +693,15 @@ export class PaymentsService {
     };
     this.ensureMatchingPayment(paymentOrder, normalized);
 
-    if (payment.status === 'captured') {
-      await this.recordCapturedPayment(paymentOrder, normalized, null);
+    if (payment.status === "captured") {
+      const result = await this.recordCapturedPayment(
+        paymentOrder,
+        normalized,
+        null,
+      );
+      if (result.orderStatus === "confirmed") {
+        await this.triggerPickupAssignment(result.orderId);
+      }
     } else {
       await this.recordFailedPayment(paymentOrder, normalized);
     }
@@ -671,19 +714,19 @@ export class PaymentsService {
       !refund?.payment_id ||
       !Number.isSafeInteger(Number(refund.amount)) ||
       Number(refund.amount) <= 0 ||
-      typeof refund.currency !== 'string' ||
-      !['pending', 'processed', 'failed'].includes(refund.status)
+      typeof refund.currency !== "string" ||
+      !["pending", "processed", "failed"].includes(refund.status)
     ) {
-      throw new BadRequestException('Incomplete refund webhook');
+      throw new BadRequestException("Incomplete refund webhook");
     }
 
     const reference = refund.notes?.bright_white_refund_id;
     const select =
-      'id,payment_order_id,amount,provider_refund_id,payment_orders(provider_payment_id,currency)';
+      "id,payment_order_id,amount,provider_refund_id,payment_orders(provider_payment_id,currency)";
     const { data: byProviderId, error } = await this.db()
-      .from('refund_requests')
+      .from("refund_requests")
       .select(select)
-      .eq('provider_refund_id', refund.id)
+      .eq("provider_refund_id", refund.id)
       .maybeSingle();
 
     if (error) {
@@ -691,11 +734,15 @@ export class PaymentsService {
     }
 
     let refundRequest = byProviderId;
-    if (!refundRequest && typeof reference === 'string' && UUID_PATTERN.test(reference)) {
+    if (
+      !refundRequest &&
+      typeof reference === "string" &&
+      UUID_PATTERN.test(reference)
+    ) {
       const { data: byReference, error: referenceError } = await this.db()
-        .from('refund_requests')
+        .from("refund_requests")
         .select(select)
-        .eq('id', reference)
+        .eq("id", reference)
         .maybeSingle();
       if (referenceError) {
         throw new BadRequestException(referenceError.message);
@@ -707,15 +754,15 @@ export class PaymentsService {
       return;
     }
 
-    if (typeof reference === 'string' && reference !== refundRequest.id) {
-      throw new ConflictException('Provider refund reference does not match');
+    if (typeof reference === "string" && reference !== refundRequest.id) {
+      throw new ConflictException("Provider refund reference does not match");
     }
 
     const relatedPayment = Array.isArray(refundRequest.payment_orders)
       ? refundRequest.payment_orders[0]
       : refundRequest.payment_orders;
     if (!relatedPayment?.provider_payment_id || !relatedPayment.currency) {
-      throw new ConflictException('Refund payment context is incomplete');
+      throw new ConflictException("Refund payment context is incomplete");
     }
 
     const normalized: ProviderRefund = {
@@ -724,7 +771,7 @@ export class PaymentsService {
       amount: Number(refund.amount),
       currency: refund.currency,
       status: refund.status,
-      reference: typeof reference === 'string' ? reference : null,
+      reference: typeof reference === "string" ? reference : null,
     };
     this.ensureMatchingRefund(
       {
@@ -743,26 +790,26 @@ export class PaymentsService {
 
     let event: any;
     try {
-      event = JSON.parse(rawBody.toString('utf8'));
+      event = JSON.parse(rawBody.toString("utf8"));
     } catch {
-      throw new BadRequestException('Invalid webhook JSON');
+      throw new BadRequestException("Invalid webhook JSON");
     }
 
     const externalEventId =
-      eventId?.trim() || createHash('sha256').update(rawBody).digest('hex');
+      eventId?.trim() || createHash("sha256").update(rawBody).digest("hex");
 
     const { data: registration, error: registrationError } =
-      await this.db().rpc('register_payment_webhook_event_atomic', {
-        p_provider: 'razorpay',
+      await this.db().rpc("register_payment_webhook_event_atomic", {
+        p_provider: "razorpay",
         p_external_event_id: externalEventId,
-        p_event_type: event.event || 'unknown',
+        p_event_type: event.event || "unknown",
         p_payload: event,
       });
 
     if (registrationError || !registration) {
       this.throwDatabaseError(
         registrationError ?? {},
-        'Unable to persist webhook event',
+        "Unable to persist webhook event",
       );
     }
 
@@ -775,35 +822,35 @@ export class PaymentsService {
 
     if (!registration.claimed) {
       throw new ServiceUnavailableException(
-        'Webhook event processing is already in progress',
+        "Webhook event processing is already in progress",
       );
     }
 
     try {
       if (
-        event.event === 'payment.captured' ||
-        event.event === 'payment.failed'
+        event.event === "payment.captured" ||
+        event.event === "payment.failed"
       ) {
         await this.processPaymentWebhook(event);
       } else if (
-        event.event === 'refund.processed' ||
-        event.event === 'refund.failed'
+        event.event === "refund.processed" ||
+        event.event === "refund.failed"
       ) {
         await this.processRefundWebhook(event);
       }
 
       const { error: finishError } = await this.db().rpc(
-        'finish_payment_webhook_event_atomic',
+        "finish_payment_webhook_event_atomic",
         {
           p_event_id: registration.eventId,
           p_succeeded: true,
         },
       );
       if (finishError) {
-        this.throwDatabaseError(finishError, 'Unable to finish webhook event');
+        this.throwDatabaseError(finishError, "Unable to finish webhook event");
       }
     } catch (error) {
-      await this.db().rpc('finish_payment_webhook_event_atomic', {
+      await this.db().rpc("finish_payment_webhook_event_atomic", {
         p_event_id: registration.eventId,
         p_succeeded: false,
       });
@@ -824,10 +871,10 @@ export class PaymentsService {
   ) {
     const amountPaise = Math.round(Number(amount) * 100);
     if (!Number.isSafeInteger(amountPaise) || amountPaise <= 0) {
-      throw new BadRequestException('Refund amount is invalid');
+      throw new BadRequestException("Refund amount is invalid");
     }
 
-    const { data, error } = await this.db().rpc('request_refund_atomic', {
+    const { data, error } = await this.db().rpc("request_refund_atomic", {
       p_payment_order_id: paymentOrderId,
       p_requested_by: profileId,
       p_amount: amountPaise / 100,
@@ -835,15 +882,19 @@ export class PaymentsService {
     });
 
     if (error || !data) {
-      this.throwDatabaseError(error ?? {}, 'Unable to request refund');
+      this.throwDatabaseError(error ?? {}, "Unable to request refund");
     }
 
     return data;
   }
 
-  async approveRefund(adminId: string, refundId: string, notes = 'Approved by Admin') {
+  async approveRefund(
+    adminId: string,
+    refundId: string,
+    notes = "Approved by Admin",
+  ) {
     const { data: claim, error: claimError } = await this.db().rpc(
-      'admin_claim_refund_approval_audited_atomic',
+      "admin_claim_refund_approval_audited_atomic",
       {
         p_refund_id: refundId,
         p_admin_id: adminId,
@@ -852,7 +903,7 @@ export class PaymentsService {
     );
 
     if (claimError || !claim) {
-      this.throwDatabaseError(claimError ?? {}, 'Unable to approve refund');
+      this.throwDatabaseError(claimError ?? {}, "Unable to approve refund");
     }
 
     const refundClaim = claim as RefundClaim;
@@ -860,7 +911,7 @@ export class PaymentsService {
     if (!refundClaim.claimed) {
       if (
         refundClaim.providerRefundId &&
-        ['completed', 'failed'].includes(refundClaim.status)
+        ["completed", "failed"].includes(refundClaim.status)
       ) {
         return {
           refundId,

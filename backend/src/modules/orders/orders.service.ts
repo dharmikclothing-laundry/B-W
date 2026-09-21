@@ -5,23 +5,22 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { createHash } from 'node:crypto';
+import { createHash } from "node:crypto";
 
 import { SupabaseService } from "../supabase/supabase.service";
 import { GrowthService } from "../growth/growth.service";
 import { PackagesService } from "../packages/packages.service";
 import { CreateOrderDto } from "./dto/create-order.dto";
-import {
-calculateOrderPricing,
-} from "./order-pricing";
-import {
-  CUSTOMER_TERMS_VERSION,
-} from "./order-terms";
+import { calculateOrderPricing } from "./order-pricing";
+import { CUSTOMER_TERMS_VERSION } from "./order-terms";
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly supabase: SupabaseService, private readonly growth?: GrowthService,
-    private readonly packages?: PackagesService) {}
+  constructor(
+    private readonly supabase: SupabaseService,
+    private readonly growth?: GrowthService,
+    private readonly packages?: PackagesService,
+  ) {}
 
   private db() {
     return this.supabase.admin;
@@ -41,22 +40,48 @@ export class OrdersService {
     return data.id;
   }
 
+  private async facilityId(requestedFacilityId?: string): Promise<string> {
+    let query = this.db()
+      .from("facilities")
+      .select("id")
+      .eq("is_active", true)
+      .not("latitude", "is", null)
+      .not("longitude", "is", null);
+
+    if (requestedFacilityId) {
+      query = query.eq("id", requestedFacilityId);
+    } else {
+      query = query.order("created_at", { ascending: true }).limit(1);
+    }
+
+    const { data, error } = await query.maybeSingle();
+    if (error || !data) {
+      throw new BadRequestException("No active service facility is available");
+    }
+    return data.id;
+  }
+
   async create(profileId: string, dto: CreateOrderDto) {
     const customerId = await this.customerId(profileId);
     const requestHash = dto.idempotencyKey
-      ? createHash('sha256').update(JSON.stringify({...dto, idempotencyKey: undefined})).digest('hex')
+      ? createHash("sha256")
+          .update(JSON.stringify({ ...dto, idempotencyKey: undefined }))
+          .digest("hex")
       : null;
     const existingOrder = async () => {
       if (!dto.idempotencyKey) return null;
-      const {data, error} = await this.db().from('orders')
-        .select('id, idempotency_request_hash')
-        .eq('customer_id', customerId)
-        .eq('idempotency_key', dto.idempotencyKey)
+      const { data, error } = await this.db()
+        .from("orders")
+        .select("id, idempotency_request_hash")
+        .eq("customer_id", customerId)
+        .eq("idempotency_key", dto.idempotencyKey)
         .maybeSingle();
-      if (error) throw new BadRequestException('Unable to verify order retry');
+      if (error) throw new BadRequestException("Unable to verify order retry");
       if (!data) return null;
       if (data.idempotency_request_hash !== requestHash) {
-        throw new ConflictException('This order retry key was used with a different checkout');
+        throw new ConflictException(
+          "This order retry key was used with a different checkout",
+        );
       }
       return this.getById(profileId, data.id);
     };
@@ -73,8 +98,12 @@ export class OrdersService {
     }
   }
 
-  private async createNewOrder(profileId: string, customerId: string, dto: CreateOrderDto, requestHash: string | null) {
-
+  private async createNewOrder(
+    profileId: string,
+    customerId: string,
+    dto: CreateOrderDto,
+    requestHash: string | null,
+  ) {
     /*
      * Validate pickup date/time.
      * The customer cannot schedule a pickup in the past.
@@ -93,14 +122,8 @@ export class OrdersService {
      * Verify both pickup and delivery
      * addresses belong to this customer.
      */
-    for (const addressId of [
-      dto.pickupAddressId,
-      dto.deliveryAddressId,
-    ]) {
-      const {
-        data: address,
-        error: addressError,
-      } = await this.db()
+    for (const addressId of [dto.pickupAddressId, dto.deliveryAddressId]) {
+      const { data: address, error: addressError } = await this.db()
         .from("customer_addresses")
         .select("id")
         .eq("id", addressId)
@@ -108,11 +131,11 @@ export class OrdersService {
         .maybeSingle();
 
       if (addressError || !address) {
-        throw new BadRequestException(
-          "Address does not belong to customer",
-        );
+        throw new BadRequestException("Address does not belong to customer");
       }
     }
+
+    const assignedFacilityId = await this.facilityId(dto.facilityId);
 
     let subtotal = 0;
     const seenServices = new Set<string>();
@@ -135,117 +158,75 @@ export class OrdersService {
      */
     for (const item of dto.items) {
       if (seenServices.has(item.serviceId)) {
-        throw new BadRequestException('Duplicate service in order');
+        throw new BadRequestException("Duplicate service in order");
       }
       seenServices.add(item.serviceId);
-      const {
-        data: service,
-        error: serviceError,
-      } = await this.db()
+      const { data: service, error: serviceError } = await this.db()
         .from("services")
         .select("id,name,is_active,category_id")
         .eq("id", item.serviceId)
         .maybeSingle();
 
-      if (
-        serviceError ||
-        !service?.is_active
-      ) {
-        throw new BadRequestException(
-          `Invalid service ${item.serviceId}`,
-        );
+      if (serviceError || !service?.is_active) {
+        throw new BadRequestException(`Invalid service ${item.serviceId}`);
       }
       if (service.category_id) {
-        const {data: category, error: categoryError} = await this.db().from('service_categories')
-          .select('is_active').eq('id', service.category_id).maybeSingle();
-        if (categoryError || !category?.is_active) throw new BadRequestException(`Unavailable service ${item.serviceId}`);
+        const { data: category, error: categoryError } = await this.db()
+          .from("service_categories")
+          .select("is_active")
+          .eq("id", service.category_id)
+          .maybeSingle();
+        if (categoryError || !category?.is_active)
+          throw new BadRequestException(
+            `Unavailable service ${item.serviceId}`,
+          );
       }
 
       let priceQuery = this.db()
         .from("service_prices")
         .select("price")
-        .eq(
-          "service_id",
-          item.serviceId,
-        )
-        .lte(
-          "effective_from",
-          now,
-        )
-        .or(
-          `effective_to.is.null,effective_to.gt.${now}`,
-        )
-        .order(
-          "effective_from",
-          {
-            ascending: false,
-          },
-        )
+        .eq("service_id", item.serviceId)
+        .lte("effective_from", now)
+        .or(`effective_to.is.null,effective_to.gt.${now}`)
+        .order("effective_from", {
+          ascending: false,
+        })
         .limit(1);
 
       if (dto.facilityId) {
-        priceQuery =
-          priceQuery.eq(
-            "facility_id",
-            dto.facilityId,
-          );
+        priceQuery = priceQuery.eq("facility_id", dto.facilityId);
       } else {
-        priceQuery =
-          priceQuery.is(
-            "facility_id",
-            null,
-          );
+        priceQuery = priceQuery.is("facility_id", null);
       }
 
-      const {
-        data: prices,
-        error: priceError,
-      } = await priceQuery;
+      const { data: prices, error: priceError } = await priceQuery;
 
-      if (
-        priceError ||
-        !prices?.length
-      ) {
+      if (priceError || !prices?.length) {
         throw new BadRequestException(
           `No active price for service ${item.serviceId}`,
         );
       }
 
-      const unitPrice =
-        Number(
-          prices[0].price,
-        );
+      const unitPrice = Number(prices[0].price);
 
-      const lineTotal =
-        unitPrice *
-        item.quantity;
+      const lineTotal = unitPrice * item.quantity;
 
-      subtotal +=
-        lineTotal;
+      subtotal += lineTotal;
 
       items.push({
-        service_id:
-          item.serviceId,
+        service_id: item.serviceId,
 
-        item_name:
-          item.itemName,
+        item_name: item.itemName,
 
-        quantity:
-          item.quantity,
+        quantity: item.quantity,
 
-        weight_kg:
-          item.weightKg ??
-          null,
+        weight_kg: item.weightKg ?? null,
 
-        unit_price:
-          unitPrice,
+        unit_price: unitPrice,
 
-        line_total:
-          lineTotal,
+        line_total: lineTotal,
 
-        customer_notes:
-          item.customerNotes ??
-          null,
+        customer_notes: item.customerNotes ?? null,
       });
     }
 
@@ -262,43 +243,75 @@ export class OrdersService {
      *   5% of subtotal + pickup/delivery charge
      */
     if (dto.couponCode && !this.growth) {
-      throw new BadRequestException('Coupon validation unavailable');
+      throw new BadRequestException("Coupon validation unavailable");
     }
     const coupon = dto.couponCode
       ? await this.growth!.applyCoupon(profileId, dto.couponCode, subtotal)
       : null;
     if (dto.packageSubscriptionId && !this.packages) {
-      throw new BadRequestException('Package validation unavailable');
+      throw new BadRequestException("Package validation unavailable");
     }
     const packageQuote = dto.packageSubscriptionId
       ? await this.packages!.quote(profileId, dto.packageSubscriptionId, items)
       : null;
     if (packageQuote && packageQuote.coverages.length === 0) {
-      throw new BadRequestException('No eligible package credits for this order');
+      throw new BadRequestException(
+        "No eligible package credits for this order",
+      );
     }
     const packageDiscount = packageQuote?.discount ?? 0;
-    const couponDiscount = Math.min(coupon?.discount ?? 0, Math.max(0, subtotal - packageDiscount));
+    const couponDiscount = Math.min(
+      coupon?.discount ?? 0,
+      Math.max(0, subtotal - packageDiscount),
+    );
     const points = dto.loyaltyPointsToRedeem ?? 0;
-    const {data: growthRules, error: growthRulesError} = await this.db().from('admin_growth_settings')
-      .select('loyalty_points_per_rupee,loyalty_minimum_redemption_rupees').eq('id', true).single();
-    if (growthRulesError || !growthRules) throw new BadRequestException('Loyalty rules unavailable');
+    const { data: growthRules, error: growthRulesError } = await this.db()
+      .from("admin_growth_settings")
+      .select("loyalty_points_per_rupee,loyalty_minimum_redemption_rupees")
+      .eq("id", true)
+      .single();
+    if (growthRulesError || !growthRules)
+      throw new BadRequestException("Loyalty rules unavailable");
     const pointsPerRupee = Number(growthRules.loyalty_points_per_rupee);
-    const minimumPoints = Math.ceil(Number(growthRules.loyalty_minimum_redemption_rupees) * pointsPerRupee);
-    if (!Number.isSafeInteger(points) || points < 0 || (points > 0 && points < minimumPoints) ||
-      points > Math.round((subtotal - couponDiscount - packageDiscount) * pointsPerRupee)) {
-      throw new BadRequestException('Invalid loyalty points for this order');
+    const minimumPoints = Math.ceil(
+      Number(growthRules.loyalty_minimum_redemption_rupees) * pointsPerRupee,
+    );
+    if (
+      !Number.isSafeInteger(points) ||
+      points < 0 ||
+      (points > 0 && points < minimumPoints) ||
+      points >
+        Math.round(
+          (subtotal - couponDiscount - packageDiscount) * pointsPerRupee,
+        )
+    ) {
+      throw new BadRequestException("Invalid loyalty points for this order");
     }
     const loyaltyDiscount = points / pointsPerRupee;
-    const {data: policyRow, error: policyError} = await this.db().from('checkout_pricing_policies')
-      .select('pickup_delivery_fee,free_delivery_threshold,gst_rate_percent,minimum_order_amount')
-      .lte('effective_from', now).order('effective_from', {ascending: false}).limit(1).maybeSingle();
-    if (policyError || !policyRow) throw new BadRequestException('Checkout pricing configuration unavailable');
-    if (subtotal < Number(policyRow.minimum_order_amount)) throw new BadRequestException('Order is below the minimum order amount');
-    const pricing = calculateOrderPricing(subtotal, couponDiscount + loyaltyDiscount + packageDiscount, {
-      pickupDeliveryFee: Number(policyRow.pickup_delivery_fee),
-      freeDeliveryThreshold: Number(policyRow.free_delivery_threshold),
-      gstRatePercent: Number(policyRow.gst_rate_percent),
-    });
+    const { data: policyRow, error: policyError } = await this.db()
+      .from("checkout_pricing_policies")
+      .select(
+        "pickup_delivery_fee,free_delivery_threshold,gst_rate_percent,minimum_order_amount",
+      )
+      .lte("effective_from", now)
+      .order("effective_from", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (policyError || !policyRow)
+      throw new BadRequestException(
+        "Checkout pricing configuration unavailable",
+      );
+    if (subtotal < Number(policyRow.minimum_order_amount))
+      throw new BadRequestException("Order is below the minimum order amount");
+    const pricing = calculateOrderPricing(
+      subtotal,
+      couponDiscount + loyaltyDiscount + packageDiscount,
+      {
+        pickupDeliveryFee: Number(policyRow.pickup_delivery_fee),
+        freeDeliveryThreshold: Number(policyRow.free_delivery_threshold),
+        gstRatePercent: Number(policyRow.gst_rate_percent),
+      },
+    );
 
     /*
      * Razorpay orders first wait for payment.
@@ -306,13 +319,10 @@ export class OrdersService {
      * can move directly to confirmed.
      */
     const targetStatus =
-      dto.paymentMethod ===
-      "razorpay"
-        ? "pending_payment"
-        : "confirmed";
+      dto.paymentMethod === "razorpay" ? "pending_payment" : "confirmed";
 
     const rewardOrderPayload = {
-      facility_id: dto.facilityId ?? null,
+      facility_id: assignedFacilityId,
       pickup_address_id: dto.pickupAddressId,
       delivery_address_id: dto.deliveryAddressId,
       pickup_scheduled_at: dto.pickupScheduledAt,
@@ -335,17 +345,28 @@ export class OrdersService {
     };
 
     if (packageQuote) {
-      const {data: orderId, error} = await this.db().rpc('create_customer_order_with_package_atomic', {
-        p_customer_id: customerId, p_order: rewardOrderPayload, p_items: items,
-        p_target_status: targetStatus, p_points: points,
-        p_subscription_id: packageQuote.subscriptionId, p_coverages: packageQuote.coverages,
-      });
-      if (error || !orderId) throw new BadRequestException(error?.message ?? 'Unable to use package credits');
+      const { data: orderId, error } = await this.db().rpc(
+        "create_customer_order_with_package_atomic",
+        {
+          p_customer_id: customerId,
+          p_order: rewardOrderPayload,
+          p_items: items,
+          p_target_status: targetStatus,
+          p_points: points,
+          p_subscription_id: packageQuote.subscriptionId,
+          p_coverages: packageQuote.coverages,
+        },
+      );
+      if (error || !orderId)
+        throw new BadRequestException(
+          error?.message ?? "Unable to use package credits",
+        );
       return this.getById(profileId, orderId);
     }
 
-    const {data: orderId, error} = await this.db().rpc(
-      'create_customer_order_with_rewards_atomic', {
+    const { data: orderId, error } = await this.db().rpc(
+      "create_customer_order_with_rewards_atomic",
+      {
         p_customer_id: customerId,
         p_order: rewardOrderPayload,
         p_items: items,
@@ -354,420 +375,195 @@ export class OrdersService {
       },
     );
     if (error || !orderId) {
-      throw new BadRequestException(error?.message ?? 'Unable to create order');
+      throw new BadRequestException(error?.message ?? "Unable to create order");
     }
     return this.getById(profileId, orderId);
   }
 
-  async cancel(
-    profileId: string,
-    orderId: string,
-    reason: string,
-  ) {
-    const {
-      data,
-      error,
-    } = await this.db()
-      .rpc(
-        "cancel_customer_order_atomic",
-        {
-          p_order_id:
-            orderId,
+  async cancel(profileId: string, orderId: string, reason: string) {
+    const { data, error } = await this.db().rpc(
+      "cancel_customer_order_atomic",
+      {
+        p_order_id: orderId,
 
-          p_profile_id:
-            profileId,
+        p_profile_id: profileId,
 
-          p_reason:
-            reason,
-        },
-      );
+        p_reason: reason,
+      },
+    );
 
-    if (
-      error?.code ===
-      "P0002"
-    ) {
-      throw new NotFoundException(
-        error.message ??
-          "Order not found",
-      );
+    if (error?.code === "P0002") {
+      throw new NotFoundException(error.message ?? "Order not found");
     }
 
-    if (
-      error?.code ===
-      "42501"
-    ) {
+    if (error?.code === "42501") {
       throw new ForbiddenException(
-        error.message ??
-          "Order belongs to another customer",
+        error.message ?? "Order belongs to another customer",
       );
     }
 
-    if (
-      [
-        "23505",
-        "23514",
-        "40001",
-      ].includes(
-        error?.code ??
-          "",
-      )
-    ) {
-      throw new ConflictException(
-        error?.message ??
-          "Unable to cancel order",
-      );
+    if (["23505", "23514", "40001"].includes(error?.code ?? "")) {
+      throw new ConflictException(error?.message ?? "Unable to cancel order");
     }
 
-    if (
-      error ||
-      !data
-    ) {
-      throw new BadRequestException(
-        error?.message ??
-          "Unable to cancel order",
-      );
+    if (error || !data) {
+      throw new BadRequestException(error?.message ?? "Unable to cancel order");
     }
 
     return data;
   }
 
-  async getById(
-    profileId: string,
-    id: string,
-  ) {
-    const {
-      data: order,
-      error,
-    } = await this.db()
+  async getById(profileId: string, id: string) {
+    const { data: order, error } = await this.db()
       .from("orders")
       .select(
         "*,customers(profile_id),order_items(*,order_item_photos(*)),order_qr_codes(*),order_status_history(*)",
       )
-      .eq(
-        "id",
-        id,
-      )
+      .eq("id", id)
       .maybeSingle();
 
-    if (
-      error ||
-      !order
-    ) {
-      throw new NotFoundException(
-        "Order not found",
-      );
+    if (error || !order) {
+      throw new NotFoundException("Order not found");
     }
 
-    const isOwner =
-      (order as any)
-        .customers
-        ?.profile_id ===
-      profileId;
+    const isOwner = (order as any).customers?.profile_id === profileId;
 
-    const {
-      data: roleRows,
-      error: rolesError,
-    } = await this.db()
-      .from(
-        "profile_roles",
-      )
-      .select(
-        "roles(code)",
-      )
-      .eq(
-        "profile_id",
-        profileId,
-      );
+    const { data: roleRows, error: rolesError } = await this.db()
+      .from("profile_roles")
+      .select("roles(code)")
+      .eq("profile_id", profileId);
 
     if (rolesError) {
-      throw new ForbiddenException(
-        "Unable to verify access",
-      );
+      throw new ForbiddenException("Unable to verify access");
     }
 
-    const roleCodes =
-      (
-        roleRows ??
-        []
-      ).map(
-        (
-          row: any,
-        ) =>
-          row.roles
-            ?.code,
-      );
+    const roleCodes = (roleRows ?? []).map((row: any) => row.roles?.code);
 
-    const elevatedAccess =
-      roleCodes.some(
-        (
-          code: string,
-        ) =>
-          [
-            "admin",
-            "manager",
-            "facility_employee",
-          ].includes(
-            code,
-          ),
-      );
+    const elevatedAccess = roleCodes.some((code: string) =>
+      ["admin", "manager", "facility_employee"].includes(code),
+    );
 
-    let assignedDriver =
-      false;
+    let assignedDriver = false;
 
-    if (
-      !isOwner &&
-      !elevatedAccess &&
-      roleCodes.includes(
-        "driver",
-      )
-    ) {
-      const {
-        data: driver,
-        error:
-          driverError,
-      } = await this.db()
-        .from(
-          "drivers",
-        )
-        .select(
-          "id,is_active",
-        )
-        .eq(
-          "profile_id",
-          profileId,
-        )
+    if (!isOwner && !elevatedAccess && roleCodes.includes("driver")) {
+      const { data: driver, error: driverError } = await this.db()
+        .from("drivers")
+        .select("id,is_active")
+        .eq("profile_id", profileId)
         .maybeSingle();
 
-      if (
-        !driverError &&
-        driver?.is_active
-      ) {
-        const {
-          data:
-            assignment,
-          error:
-            assignmentError,
-        } = await this.db()
-          .from(
-            "driver_assignments",
-          )
+      if (!driverError && driver?.is_active) {
+        const { data: assignment, error: assignmentError } = await this.db()
+          .from("driver_assignments")
           .select("id")
-          .eq(
-            "order_id",
-            id,
-          )
-          .eq(
-            "driver_id",
-            driver.id,
-          )
+          .eq("order_id", id)
+          .eq("driver_id", driver.id)
           .limit(1)
           .maybeSingle();
 
-        assignedDriver =
-          !assignmentError &&
-          Boolean(
-            assignment,
-          );
+        assignedDriver = !assignmentError && Boolean(assignment);
       }
     }
 
-    if (
-      !isOwner &&
-      !elevatedAccess &&
-      !assignedDriver
-    ) {
-      throw new ForbiddenException(
-        "Not authorized to view this order",
-      );
+    if (!isOwner && !elevatedAccess && !assignedDriver) {
+      throw new ForbiddenException("Not authorized to view this order");
     }
 
     return order;
   }
 
-  async listMine(
-    profileId: string,
-  ) {
-    const customerId =
-      await this.customerId(
-        profileId,
-      );
+  async listMine(profileId: string) {
+    const customerId = await this.customerId(profileId);
 
-    const {
-      data,
-      error,
-    } = await this.db()
+    const { data, error } = await this.db()
       .from("orders")
-      .select(
-        "*,order_items(*)",
-      )
-      .eq(
-        "customer_id",
-        customerId,
-      )
-      .order(
-        "created_at",
-        {
-          ascending:
-            false,
-        },
-      );
+      .select("*,order_items(*)")
+      .eq("customer_id", customerId)
+      .order("created_at", {
+        ascending: false,
+      });
 
     if (error) {
-      throw new BadRequestException(
-        error.message,
-      );
+      throw new BadRequestException(error.message);
     }
 
     return data ?? [];
   }
 
-  async history(
-    profileId: string,
-    id: string,
-  ) {
-    await this.getById(
-      profileId,
-      id,
-    );
+  async history(profileId: string, id: string) {
+    await this.getById(profileId, id);
 
-    const {
-      data,
-      error,
-    } = await this.db()
-      .from(
-        "order_status_history",
-      )
+    const { data, error } = await this.db()
+      .from("order_status_history")
       .select("*")
-      .eq(
-        "order_id",
-        id,
-      )
-      .order(
-        "created_at",
-      );
+      .eq("order_id", id)
+      .order("created_at");
 
     if (error) {
-      throw new BadRequestException(
-        error.message,
-      );
+      throw new BadRequestException(error.message);
     }
 
     return data ?? [];
   }
 
-  async activateClaimPeriod(
-    orderId: string,
-  ) {
-    const {
-      data: order,
-      error,
-    } = await this.db()
+  async activateClaimPeriod(orderId: string) {
+    const { data: order, error } = await this.db()
       .from("orders")
-      .select(
-        "id,current_status",
-      )
-      .eq(
-        "id",
-        orderId,
-      )
+      .select("id,current_status")
+      .eq("id", orderId)
       .maybeSingle();
 
-    if (
-      error ||
-      !order
-    ) {
-      throw new NotFoundException(
-        "Order not found",
-      );
+    if (error || !order) {
+      throw new NotFoundException("Order not found");
     }
 
-    if (
-      ![
-        "delivered",
-        "claim_period_active",
-      ].includes(
-        order.current_status,
-      )
-    ) {
+    if (!["delivered", "claim_period_active"].includes(order.current_status)) {
       throw new BadRequestException(
         `Claim period cannot start while order is ${order.current_status}`,
       );
     }
 
-    if (
-      order.current_status ===
-      "claim_period_active"
-    ) {
+    if (order.current_status === "claim_period_active") {
       return {
         orderId,
-        orderStatus:
-          "claim_period_active",
+        orderStatus: "claim_period_active",
       };
     }
 
-    const {
-      error: statusError,
-    } = await this.db()
-      .rpc(
-        "change_order_status",
-        {
-          p_order_id:
-            orderId,
+    const { error: statusError } = await this.db().rpc("change_order_status", {
+      p_order_id: orderId,
 
-          p_new_status:
-            "claim_period_active",
+      p_new_status: "claim_period_active",
 
-          p_reason:
-            "Delivery claim period activated",
-        },
-      );
+      p_reason: "Delivery claim period activated",
+    });
 
     if (statusError) {
-      throw new BadRequestException(
-        statusError.message,
-      );
+      throw new BadRequestException(statusError.message);
     }
 
     return {
       orderId,
-      orderStatus:
-        "claim_period_active",
+      orderStatus: "claim_period_active",
     };
   }
 
-  async completeClaimPeriod(
-    orderId: string,
-  ) {
-    const {
-      error,
-    } = await this.db()
-      .rpc(
-        "complete_expired_claim_period",
-        {
-          p_order_id:
-            orderId,
-        },
-      );
+  async completeClaimPeriod(orderId: string) {
+    const { error } = await this.db().rpc("complete_expired_claim_period", {
+      p_order_id: orderId,
+    });
 
-    if (
-      error?.code ===
-      "P0002"
-    ) {
-      throw new NotFoundException(
-        "Order not found",
-      );
+    if (error?.code === "P0002") {
+      throw new NotFoundException("Order not found");
     }
 
     if (error) {
-      throw new BadRequestException(
-        error.message,
-      );
+      throw new BadRequestException(error.message);
     }
 
     return {
       orderId,
-      orderStatus:
-        "completed",
+      orderStatus: "completed",
     };
   }
 }

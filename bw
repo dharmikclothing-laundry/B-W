@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+case "${1:-}" in
+  platform-order-e2e)
+    exec node "$ROOT/backend/scripts/platform-order-e2e.cjs"
+    ;;
+  *)
+    echo "Usage: ./bw platform-order-e2e" >&2
+    exit 2
+    ;;
+esac

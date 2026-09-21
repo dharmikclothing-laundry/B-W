@@ -3,15 +3,33 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 
 import { SupabaseService } from "../supabase/supabase.service";
-import {VerifyIntakeDto} from './dto/verify-intake.dto';
+import { LogisticsService } from "../logistics/logistics.service";
+import { VerifyIntakeDto } from "./dto/verify-intake.dto";
 
 @Injectable()
 export class FacilityService {
-  constructor(private readonly supabase: SupabaseService) {}
+  private readonly logger = new Logger(FacilityService.name);
+
+  constructor(
+    private readonly supabase: SupabaseService,
+    private readonly logistics?: LogisticsService,
+  ) {}
+
+  private async triggerDeliveryAssignment(orderId: string) {
+    if (!this.logistics) return;
+    try {
+      await this.logistics.assignBestDriver(orderId, "delivery");
+    } catch (error) {
+      this.logger.warn(
+        `Automatic delivery assignment failed for order ${orderId}: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+    }
+  }
 
   private db() {
     return this.supabase.admin;
@@ -30,31 +48,63 @@ export class FacilityService {
     }
 
     const { data: facility, error: facilityError } = await this.db()
-      .from('facilities').select('id,name,address,is_active')
-      .eq('id', employee.facility_id).maybeSingle();
+      .from("facilities")
+      .select("id,name,address,is_active")
+      .eq("id", employee.facility_id)
+      .maybeSingle();
     if (facilityError || !facility?.is_active) {
-      throw new ForbiddenException('Active facility required');
+      throw new ForbiddenException("Active facility required");
     }
-    return { facilityId: employee.facility_id, role: employee.employee_role, facility };
+    return {
+      facilityId: employee.facility_id,
+      role: employee.employee_role,
+      facility,
+    };
   }
 
   async dashboard(profileId: string) {
     const access = await this.requireFacilityEmployee(profileId);
-    const { data: orders, error } = await this.db().from('orders')
-      .select('id,order_number,current_status,created_at,updated_at')
-      .eq('facility_id', access.facilityId)
-      .in('current_status', ['in_transit_to_facility', 'received_at_facility', 'verification', 'processing', 'quality_check', 'rework_required', 'ready_for_delivery'])
-      .order('updated_at', { ascending: false }).limit(100);
-    if (error) throw new BadRequestException('Facility dashboard unavailable');
+    const { data: orders, error } = await this.db()
+      .from("orders")
+      .select("id,order_number,current_status,created_at,updated_at")
+      .eq("facility_id", access.facilityId)
+      .in("current_status", [
+        "in_transit_to_facility",
+        "received_at_facility",
+        "verification",
+        "processing",
+        "quality_check",
+        "rework_required",
+        "ready_for_delivery",
+      ])
+      .order("updated_at", { ascending: false })
+      .limit(100);
+    if (error) throw new BadRequestException("Facility dashboard unavailable");
     const queue = orders ?? [];
     return {
-      facility: { id: access.facility.id, name: access.facility.name, address: access.facility.address },
+      facility: {
+        id: access.facility.id,
+        name: access.facility.name,
+        address: access.facility.address,
+      },
       role: access.role,
       summary: {
-        incoming: queue.filter(order => order.current_status === 'in_transit_to_facility').length,
-        received: queue.filter(order => ['received_at_facility', 'verification'].includes(order.current_status)).length,
-        processing: queue.filter(order => ['processing', 'quality_check', 'rework_required'].includes(order.current_status)).length,
-        ready: queue.filter(order => order.current_status === 'ready_for_delivery').length,
+        incoming: queue.filter(
+          (order) => order.current_status === "in_transit_to_facility",
+        ).length,
+        received: queue.filter((order) =>
+          ["received_at_facility", "verification"].includes(
+            order.current_status,
+          ),
+        ).length,
+        processing: queue.filter((order) =>
+          ["processing", "quality_check", "rework_required"].includes(
+            order.current_status,
+          ),
+        ).length,
+        ready: queue.filter(
+          (order) => order.current_status === "ready_for_delivery",
+        ).length,
       },
       orders: queue,
     };
@@ -136,30 +186,104 @@ export class FacilityService {
 
   private async receiptCandidate(profileId: string, token: string) {
     const access = await this.requireFacilityEmployee(profileId);
-    if (typeof token !== 'string' || !/^(?:BW1:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token.trim())) {
-      throw new BadRequestException('Valid handoff code is required');
+    if (
+      typeof token !== "string" ||
+      !/^(?:BW1:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        token.trim(),
+      )
+    ) {
+      throw new BadRequestException("Valid handoff code is required");
     }
-    const secureToken = token.trim().replace(/^BW1:/, '');
-    const { data: qr, error: qrError } = await this.db().from('order_qr_codes')
-      .select('id,order_id,is_active').eq('secure_token', secureToken).maybeSingle();
-    if (qrError || !qr?.is_active) throw new NotFoundException('Invalid QR code');
-    const { data: order, error: orderError } = await this.db().from('orders')
-      .select('id,order_number,facility_id,current_status,created_at').eq('id', qr.order_id).maybeSingle();
-    if (orderError || !order) throw new NotFoundException('Order not found');
+    const secureToken = token.trim().replace(/^BW1:/, "");
+    const { data: qr, error: qrError } = await this.db()
+      .from("order_qr_codes")
+      .select("id,order_id,is_active")
+      .eq("secure_token", secureToken)
+      .maybeSingle();
+    if (qrError || !qr?.is_active)
+      throw new NotFoundException("Invalid QR code");
+    const { data: order, error: orderError } = await this.db()
+      .from("orders")
+      .select("id,order_number,facility_id,current_status,created_at")
+      .eq("id", qr.order_id)
+      .maybeSingle();
+    if (orderError || !order) throw new NotFoundException("Order not found");
     this.ensureFacilityMatch(access, order.facility_id);
-    if (order.current_status !== 'in_transit_to_facility') {
-      throw new ConflictException(`Facility receipt is not allowed while order is ${order.current_status}`);
+    if (order.current_status !== "in_transit_to_facility") {
+      throw new ConflictException(
+        `Facility receipt is not allowed while order is ${order.current_status}`,
+      );
     }
-    return {access, qr, order, secureToken};
+    return { access, qr, order, secureToken };
+  }
+
+  private async receiptCandidateByOrderNumber(
+    profileId: string,
+    rawOrderNumber: string,
+  ) {
+    const access = await this.requireFacilityEmployee(profileId);
+    const orderNumber = rawOrderNumber?.trim().toUpperCase();
+    if (!/^BW-[A-Z0-9-]{6,40}$/.test(orderNumber ?? "")) {
+      throw new BadRequestException("Valid B&W order ID is required");
+    }
+    const { data: order, error: orderError } = await this.db()
+      .from("orders")
+      .select("id,order_number,facility_id,current_status,created_at")
+      .eq("order_number", orderNumber)
+      .maybeSingle();
+    if (orderError || !order) throw new NotFoundException("Order not found");
+    this.ensureFacilityMatch(access, order.facility_id);
+    if (order.current_status !== "in_transit_to_facility") {
+      throw new ConflictException(
+        `Facility receipt is not allowed while order is ${order.current_status}`,
+      );
+    }
+    const { data: qr, error: qrError } = await this.db()
+      .from("order_qr_codes")
+      .select("id,order_id,is_active,secure_token")
+      .eq("order_id", order.id)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (qrError || !qr?.secure_token) {
+      throw new NotFoundException("Active order handoff record not found");
+    }
+    return { access, qr, order, secureToken: qr.secure_token };
+  }
+
+  private async receiptPreview(
+    access: { facility: { id: string; name: string } },
+    order: {
+      id: string;
+      order_number: string;
+      current_status: string;
+    },
+  ) {
+    const { data: items, error } = await this.db()
+      .from("order_items")
+      .select("item_name,quantity,weight_kg")
+      .eq("order_id", order.id);
+    if (error)
+      throw new BadRequestException("Order intake details unavailable");
+    return {
+      orderId: order.id,
+      orderNumber: order.order_number,
+      orderStatus: order.current_status,
+      facility: { id: access.facility.id, name: access.facility.name },
+      items: items ?? [],
+    };
   }
 
   async previewReceipt(profileId: string, token: string) {
-    const {access, order} = await this.receiptCandidate(profileId, token);
-    const {data: items, error} = await this.db().from('order_items')
-      .select('item_name,quantity,weight_kg').eq('order_id', order.id);
-    if (error) throw new BadRequestException('Order intake details unavailable');
-    return {orderId: order.id, orderNumber: order.order_number, orderStatus: order.current_status,
-      facility: {id: access.facility.id, name: access.facility.name}, items: items ?? []};
+    const { access, order } = await this.receiptCandidate(profileId, token);
+    return this.receiptPreview(access, order);
+  }
+
+  async previewReceiptByOrderNumber(profileId: string, orderNumber: string) {
+    const { access, order } = await this.receiptCandidateByOrderNumber(
+      profileId,
+      orderNumber,
+    );
+    return this.receiptPreview(access, order);
   }
 
   async receiveByQr(
@@ -168,7 +292,7 @@ export class FacilityService {
     latitude?: number,
     longitude?: number,
   ) {
-    const {secureToken} = await this.receiptCandidate(profileId, token);
+    const { secureToken } = await this.receiptCandidate(profileId, token);
 
     const { data: receipt, error: receiptError } = await this.db().rpc(
       "receive_facility_order_atomic",
@@ -194,6 +318,24 @@ export class FacilityService {
       pickupAssignmentStatus: receipt.pickupAssignmentStatus,
       received: receipt.received,
     };
+  }
+
+  async receiveByOrderNumber(
+    profileId: string,
+    orderNumber: string,
+    latitude?: number,
+    longitude?: number,
+  ) {
+    const { secureToken } = await this.receiptCandidateByOrderNumber(
+      profileId,
+      orderNumber,
+    );
+    return this.receiveByQr(
+      profileId,
+      `BW1:${secureToken}`,
+      latitude,
+      longitude,
+    );
   }
 
   async verifyOrder(
@@ -240,8 +382,7 @@ export class FacilityService {
 
     if (verificationError || !verification) {
       throw new BadRequestException(
-        verificationError?.message ??
-          "Unable to record facility verification",
+        verificationError?.message ?? "Unable to record facility verification",
       );
     }
 
@@ -256,53 +397,111 @@ export class FacilityService {
 
   async intakeDetails(profileId: string, orderId: string) {
     const access = await this.requireFacilityEmployee(profileId);
-    const {data: order, error: orderError} = await this.db().from('orders')
-      .select('id,order_number,facility_id,current_status').eq('id', orderId).maybeSingle();
-    if (orderError || !order) throw new NotFoundException('Order not found');
+    const { data: order, error: orderError } = await this.db()
+      .from("orders")
+      .select("id,order_number,facility_id,current_status")
+      .eq("id", orderId)
+      .maybeSingle();
+    if (orderError || !order) throw new NotFoundException("Order not found");
     this.ensureFacilityMatch(access, order.facility_id);
     const [items, inspections, discrepancies] = await Promise.all([
-      this.db().from('order_items').select('id,item_name,quantity,weight_kg').eq('order_id', orderId).order('id'),
-      this.db().from('garment_inspections').select('id,order_item_id,counted_quantity,weight_kg,condition_notes,created_at')
-        .eq('order_id', orderId).not('order_item_id', 'is', null).order('created_at'),
-      this.db().from('facility_intake_discrepancies')
-        .select('id,order_item_id,kind,expected_quantity,counted_quantity,expected_weight_kg,measured_weight_kg,notes,status,created_at,resolved_at,resolution_notes')
-        .eq('order_id', orderId).order('created_at'),
+      this.db()
+        .from("order_items")
+        .select("id,item_name,quantity,weight_kg")
+        .eq("order_id", orderId)
+        .order("id"),
+      this.db()
+        .from("garment_inspections")
+        .select(
+          "id,order_item_id,counted_quantity,weight_kg,condition_notes,created_at",
+        )
+        .eq("order_id", orderId)
+        .not("order_item_id", "is", null)
+        .order("created_at"),
+      this.db()
+        .from("facility_intake_discrepancies")
+        .select(
+          "id,order_item_id,kind,expected_quantity,counted_quantity,expected_weight_kg,measured_weight_kg,notes,status,created_at,resolved_at,resolution_notes",
+        )
+        .eq("order_id", orderId)
+        .order("created_at"),
     ]);
     if (items.error || inspections.error || discrepancies.error) {
-      throw new BadRequestException('Facility intake details unavailable');
+      throw new BadRequestException("Facility intake details unavailable");
     }
-    return {orderId, orderNumber: order.order_number, orderStatus: order.current_status,
-      facility: {id: access.facility.id, name: access.facility.name}, role: access.role,
-      items: items.data ?? [], inspections: inspections.data ?? [], discrepancies: discrepancies.data ?? []};
+    return {
+      orderId,
+      orderNumber: order.order_number,
+      orderStatus: order.current_status,
+      facility: { id: access.facility.id, name: access.facility.name },
+      role: access.role,
+      items: items.data ?? [],
+      inspections: inspections.data ?? [],
+      discrepancies: discrepancies.data ?? [],
+    };
   }
 
-  async verifyIntake(profileId: string, orderId: string, body: VerifyIntakeDto) {
+  async verifyIntake(
+    profileId: string,
+    orderId: string,
+    body: VerifyIntakeDto,
+  ) {
     const access = await this.requireFacilityEmployee(profileId);
     const order = await this.requireOrder(orderId);
     this.ensureFacilityMatch(access, order.facility_id);
-    if (order.current_status !== 'received_at_facility') {
-      throw new ConflictException(`Verification is not allowed while order is ${order.current_status}`);
+    if (order.current_status !== "received_at_facility") {
+      throw new ConflictException(
+        `Verification is not allowed while order is ${order.current_status}`,
+      );
     }
-    const {data, error} = await this.db().rpc('record_facility_intake_verification_atomic', {
-      p_order_id: orderId, p_performed_by: profileId, p_items: body.items, p_notes: body.notes?.trim() || null,
-    });
-    if (error || !data) this.throwProcessingRpcError(error, 'Unable to verify Facility intake');
-    return {orderId, operationId: data.operationId, verified: true,
-      orderStatus: data.orderStatus, discrepancyCount: data.discrepancyCount};
+    const { data, error } = await this.db().rpc(
+      "record_facility_intake_verification_atomic",
+      {
+        p_order_id: orderId,
+        p_performed_by: profileId,
+        p_items: body.items,
+        p_notes: body.notes?.trim() || null,
+      },
+    );
+    if (error || !data)
+      this.throwProcessingRpcError(error, "Unable to verify Facility intake");
+    return {
+      orderId,
+      operationId: data.operationId,
+      verified: true,
+      orderStatus: data.orderStatus,
+      discrepancyCount: data.discrepancyCount,
+    };
   }
 
-  async resolveIntakeDiscrepancy(profileId: string, orderId: string, discrepancyId: string, notes: string) {
+  async resolveIntakeDiscrepancy(
+    profileId: string,
+    orderId: string,
+    discrepancyId: string,
+    notes: string,
+  ) {
     const access = await this.requireFacilityEmployee(profileId);
-    if (access.role !== 'manager') throw new ForbiddenException('Facility Manager resolution required');
-    if (!notes?.trim()) throw new BadRequestException('Resolution notes are required');
+    if (access.role !== "manager")
+      throw new ForbiddenException("Facility Manager resolution required");
+    if (!notes?.trim())
+      throw new BadRequestException("Resolution notes are required");
     const order = await this.requireOrder(orderId);
     this.ensureFacilityMatch(access, order.facility_id);
-    const {data, error} = await this.db().from('facility_intake_discrepancies')
-      .update({status: 'resolved', resolved_by: profileId, resolved_at: new Date().toISOString(),
-        resolution_notes: notes.trim()})
-      .eq('id', discrepancyId).eq('order_id', orderId).eq('status', 'open')
-      .select('id,status,resolved_at,resolution_notes').maybeSingle();
-    if (error || !data) throw new ConflictException('Open Facility intake discrepancy not found');
+    const { data, error } = await this.db()
+      .from("facility_intake_discrepancies")
+      .update({
+        status: "resolved",
+        resolved_by: profileId,
+        resolved_at: new Date().toISOString(),
+        resolution_notes: notes.trim(),
+      })
+      .eq("id", discrepancyId)
+      .eq("order_id", orderId)
+      .eq("status", "open")
+      .select("id,status,resolved_at,resolution_notes")
+      .maybeSingle();
+    if (error || !data)
+      throw new ConflictException("Open Facility intake discrepancy not found");
     return data;
   }
 
@@ -310,35 +509,72 @@ export class FacilityService {
     const access = await this.requireFacilityEmployee(profileId);
     const order = await this.requireOrder(orderId);
     this.ensureFacilityMatch(access, order.facility_id);
-    const {data, error} = await this.db().from('facility_order_operations')
-      .select('id,operation_type,current_status,started_at,completed_at,started_by,completed_by,performed_by,rewash_cycle')
-      .eq('order_id', orderId).order('started_at', {ascending: true}).order('id', {ascending: true});
-    if (error) throw new BadRequestException('Facility processing history unavailable');
-    const stages = (data ?? []).filter(operation =>
-      ['washing', 'drying', 'ironing', 'folding', 'packaging'].includes(operation.operation_type));
-    const active = stages.find(operation => !operation.completed_at);
-    const completed = stages.filter(operation => operation.completed_at);
+    const { data, error } = await this.db()
+      .from("facility_order_operations")
+      .select(
+        "id,operation_type,current_status,started_at,completed_at,started_by,completed_by,performed_by,rewash_cycle",
+      )
+      .eq("order_id", orderId)
+      .order("started_at", { ascending: true })
+      .order("id", { ascending: true });
+    if (error)
+      throw new BadRequestException("Facility processing history unavailable");
+    const stages = (data ?? []).filter((operation) =>
+      ["washing", "drying", "ironing", "folding", "packaging"].includes(
+        operation.operation_type,
+      ),
+    );
+    const active = stages.find((operation) => !operation.completed_at);
+    const completed = stages.filter((operation) => operation.completed_at);
     const next: Record<string, string> = {
-      verification: 'washing', washing: 'drying', drying: 'ironing',
-      ironing: 'folding', folding: 'packaging',
+      verification: "washing",
+      washing: "drying",
+      drying: "ironing",
+      ironing: "folding",
+      folding: "packaging",
     };
     const latest = stages[stages.length - 1];
-    const expectedStage = active ? null : ['verification', 'rework_required'].includes(order.current_status) ? 'washing' :
-      order.current_status === 'processing' && latest?.completed_at ? next[latest.operation_type] ?? null : null;
-    const {count: openCount, error: discrepancyError} = await this.db()
-      .from('facility_intake_discrepancies').select('id', {count: 'exact', head: true})
-      .eq('order_id', orderId).eq('status', 'open');
-    if (discrepancyError) throw new BadRequestException('Facility discrepancy status unavailable');
-    const {data: decisions, error: qcError} = await this.db().from('facility_qc_decisions')
-      .select('id,operation_id,cycle_number,approved,rewash_required,defect_code,reason,affected_item_ids,decided_by,created_at')
-      .eq('order_id', orderId).order('created_at', {ascending: true});
-    if (qcError) throw new BadRequestException('Facility QC history unavailable');
-    return {orderId, orderStatus: order.current_status, stages, qualityDecisions: decisions ?? [],
-      role: access.role, rewashCycle: (decisions ?? []).filter(decision => !decision.approved).length,
-      canQualityCheck: access.role === 'manager' && order.current_status === 'processing' &&
-        latest?.operation_type === 'packaging' && !!latest.completed_at && !openCount,
-      activeOperationId: active?.id ?? null, nextStage: openCount ? null : expectedStage,
-      openDiscrepancies: openCount ?? 0, completedStageCount: completed.length};
+    const expectedStage = active
+      ? null
+      : ["verification", "rework_required"].includes(order.current_status)
+        ? "washing"
+        : order.current_status === "processing" && latest?.completed_at
+          ? (next[latest.operation_type] ?? null)
+          : null;
+    const { count: openCount, error: discrepancyError } = await this.db()
+      .from("facility_intake_discrepancies")
+      .select("id", { count: "exact", head: true })
+      .eq("order_id", orderId)
+      .eq("status", "open");
+    if (discrepancyError)
+      throw new BadRequestException("Facility discrepancy status unavailable");
+    const { data: decisions, error: qcError } = await this.db()
+      .from("facility_qc_decisions")
+      .select(
+        "id,operation_id,cycle_number,approved,rewash_required,defect_code,reason,affected_item_ids,decided_by,created_at",
+      )
+      .eq("order_id", orderId)
+      .order("created_at", { ascending: true });
+    if (qcError)
+      throw new BadRequestException("Facility QC history unavailable");
+    return {
+      orderId,
+      orderStatus: order.current_status,
+      stages,
+      qualityDecisions: decisions ?? [],
+      role: access.role,
+      rewashCycle: (decisions ?? []).filter((decision) => !decision.approved)
+        .length,
+      canQualityCheck:
+        order.current_status === "processing" &&
+        latest?.operation_type === "packaging" &&
+        !!latest.completed_at &&
+        !openCount,
+      activeOperationId: active?.id ?? null,
+      nextStage: openCount ? null : expectedStage,
+      openDiscrepancies: openCount ?? 0,
+      completedStageCount: completed.length,
+    };
   }
 
   async packingDetails(profileId: string, orderId: string) {
@@ -346,55 +582,120 @@ export class FacilityService {
     const order = await this.requireOrder(orderId);
     this.ensureFacilityMatch(access, order.facility_id);
     const latest = await this.operationForOrder(orderId);
-    const {data: verification, error: verificationError} = await this.db()
-      .from('facility_order_operations').select('id').eq('order_id', orderId)
-      .eq('operation_type', 'verification').order('started_at', {ascending: false})
-      .limit(1).maybeSingle();
-    if (verificationError) throw new BadRequestException('Facility verification unavailable');
+    const { data: verification, error: verificationError } = await this.db()
+      .from("facility_order_operations")
+      .select("id")
+      .eq("order_id", orderId)
+      .eq("operation_type", "verification")
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (verificationError)
+      throw new BadRequestException("Facility verification unavailable");
     const [items, inspections, packings, policy] = await Promise.all([
-      this.db().from('order_items').select('id,item_name,quantity').eq('order_id', orderId).order('id'),
-      this.db().from('garment_inspections').select('order_item_id,counted_quantity')
-        .eq('operation_id', verification?.id ?? '00000000-0000-0000-0000-000000000000').not('order_item_id', 'is', null),
-      this.db().from('facility_packings').select('id,parcel_id,cycle_number,packed_by,packed_at,notes')
-        .eq('order_id', orderId).order('cycle_number', {ascending: true}),
-      this.db().from('facility_packing_policy_orders').select('order_id')
-        .eq('order_id', orderId).maybeSingle(),
+      this.db()
+        .from("order_items")
+        .select("id,item_name,quantity")
+        .eq("order_id", orderId)
+        .order("id"),
+      this.db()
+        .from("garment_inspections")
+        .select("order_item_id,counted_quantity")
+        .eq(
+          "operation_id",
+          verification?.id ?? "00000000-0000-0000-0000-000000000000",
+        )
+        .not("order_item_id", "is", null),
+      this.db()
+        .from("facility_packings")
+        .select("id,parcel_id,cycle_number,packed_by,packed_at,notes")
+        .eq("order_id", orderId)
+        .order("cycle_number", { ascending: true }),
+      this.db()
+        .from("facility_packing_policy_orders")
+        .select("order_id")
+        .eq("order_id", orderId)
+        .maybeSingle(),
     ]);
     if (items.error || inspections.error || packings.error || policy.error) {
-      throw new BadRequestException('Facility packing unavailable');
+      throw new BadRequestException("Facility packing unavailable");
     }
-    const verified = new Map((inspections.data ?? []).map(row => [row.order_item_id, row.counted_quantity]));
-    const packingIds = (packings.data ?? []).map(row => row.id);
-    const packedRows = packingIds.length ? await this.db().from('facility_packing_items')
-      .select('packing_id,order_item_id,verified_quantity,packed_quantity').in('packing_id', packingIds) :
-      {data: [], error: null};
-    if (packedRows.error) throw new BadRequestException('Facility packing items unavailable');
-    const history = (packings.data ?? []).map(packing => ({...packing,
-      items: (packedRows.data ?? []).filter(item => item.packing_id === packing.id)}));
-    return {orderId, orderStatus: order.current_status, facility: access.facility.name,
+    const verified = new Map(
+      (inspections.data ?? []).map((row) => [
+        row.order_item_id,
+        row.counted_quantity,
+      ]),
+    );
+    const packingIds = (packings.data ?? []).map((row) => row.id);
+    const packedRows = packingIds.length
+      ? await this.db()
+          .from("facility_packing_items")
+          .select("packing_id,order_item_id,verified_quantity,packed_quantity")
+          .in("packing_id", packingIds)
+      : { data: [], error: null };
+    if (packedRows.error)
+      throw new BadRequestException("Facility packing items unavailable");
+    const history = (packings.data ?? []).map((packing) => ({
+      ...packing,
+      items: (packedRows.data ?? []).filter(
+        (item) => item.packing_id === packing.id,
+      ),
+    }));
+    return {
+      orderId,
+      orderStatus: order.current_status,
+      facility: access.facility.name,
       packingRequired: !!policy.data,
       cycleNumber: latest?.rewash_cycle ?? 0,
-      canPack: order.current_status === 'processing' && latest?.operation_type === 'packaging' &&
-        !!latest.completed_at && !!verification && (items.data ?? []).length > 0 &&
-        (items.data ?? []).every(item => verified.has(item.id)) &&
-        !history.some(packing => packing.cycle_number === latest.rewash_cycle),
-      items: (items.data ?? []).map(item => ({...item, verifiedQuantity: verified.get(item.id) ?? null})),
-      history};
+      canPack:
+        order.current_status === "processing" &&
+        latest?.operation_type === "packaging" &&
+        !!latest.completed_at &&
+        !!verification &&
+        (items.data ?? []).length > 0 &&
+        (items.data ?? []).every((item) => verified.has(item.id)) &&
+        !history.some(
+          (packing) => packing.cycle_number === latest.rewash_cycle,
+        ),
+      items: (items.data ?? []).map((item) => ({
+        ...item,
+        verifiedQuantity: verified.get(item.id) ?? null,
+      })),
+      history,
+    };
   }
 
-  async confirmPacking(profileId: string, orderId: string,
-    body: {parcelId: string; items: Array<{orderItemId: string; packedQuantity: number}>; notes?: string}) {
+  async confirmPacking(
+    profileId: string,
+    orderId: string,
+    body: {
+      parcelId?: string;
+      items: Array<{ orderItemId: string; packedQuantity: number }>;
+      notes?: string;
+    },
+  ) {
     const access = await this.requireFacilityEmployee(profileId);
     const order = await this.requireOrder(orderId);
     this.ensureFacilityMatch(access, order.facility_id);
-    if (order.current_status !== 'processing') {
-      throw new ConflictException(`Packing is not allowed while order is ${order.current_status}`);
+    if (order.current_status !== "processing") {
+      throw new ConflictException(
+        `Packing is not allowed while order is ${order.current_status}`,
+      );
     }
-    const {data, error} = await this.db().rpc('confirm_facility_packing_atomic', {
-      p_order_id: orderId, p_performed_by: profileId, p_parcel_id: body.parcelId,
-      p_items: body.items, p_notes: body.notes?.trim() || null,
-    });
-    if (error || !data) this.throwProcessingRpcError(error, 'Unable to confirm packing');
+    const { data, error } = await this.db().rpc(
+      "confirm_facility_packing_atomic",
+      {
+        p_order_id: orderId,
+        p_performed_by: profileId,
+        p_parcel_id:
+          body.parcelId?.trim().toUpperCase() ||
+          `BW-${orderId.slice(0, 8).toUpperCase()}-${Date.now()}`,
+        p_items: body.items,
+        p_notes: body.notes?.trim() || null,
+      },
+    );
+    if (error || !data)
+      this.throwProcessingRpcError(error, "Unable to confirm packing");
     return data;
   }
 
@@ -504,10 +805,7 @@ export class FacilityService {
     );
 
     if (error || !created) {
-      this.throwProcessingRpcError(
-        error,
-        "Unable to start processing",
-      );
+      this.throwProcessingRpcError(error, "Unable to start processing");
     }
 
     return {
@@ -584,12 +882,17 @@ export class FacilityService {
   ) {
     const access = await this.requireFacilityEmployee(profileId);
 
-    if (access.role !== 'manager') {
-      throw new ForbiddenException('Facility Manager QC approval required');
-    }
-    if (!approved && (!['stain', 'damage', 'finish', 'missing', 'other'].includes(defectCode ?? '') ||
-      !notes?.trim() || notes.trim().length < 5)) {
-      throw new BadRequestException('Failed QC requires defect category and reason');
+    if (
+      !approved &&
+      (!["stain", "damage", "finish", "missing", "other"].includes(
+        defectCode ?? "",
+      ) ||
+        !notes?.trim() ||
+        notes.trim().length < 5)
+    ) {
+      throw new BadRequestException(
+        "Failed QC requires defect category and reason",
+      );
     }
 
     const order = await this.requireOrder(orderId);
@@ -629,7 +932,14 @@ export class FacilityService {
       });
 
     if (qualityOperationError || !qualityOperation) {
-      this.throwProcessingRpcError(qualityOperationError, 'Unable to record quality check');
+      this.throwProcessingRpcError(
+        qualityOperationError,
+        "Unable to record quality check",
+      );
+    }
+
+    if (qualityOperation.orderStatus === "ready_for_delivery") {
+      await this.triggerDeliveryAssignment(orderId);
     }
 
     return {

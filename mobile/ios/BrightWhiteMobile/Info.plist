@@ -44,7 +44,7 @@
 		<string>location</string>
 	</array>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Bright &amp; White lets you choose photos to support a customer claim.</string>
+	<string>Bright &amp; White lets you choose photos for delivery proof and customer claims.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Bright &amp; White uses the camera for delivery photos and secure order QR scanning.</string>
 	<key>RCTNewArchEnabled</key>
