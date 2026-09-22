@@ -11,6 +11,11 @@ import { SupabaseService } from "../supabase/supabase.service";
 import { LogisticsService } from "../logistics/logistics.service";
 import { VerifyIntakeDto } from "./dto/verify-intake.dto";
 
+type DeliveryDriverCandidate = {
+  driver_id: string;
+  active_workload: number | string | null;
+};
+
 @Injectable()
 export class FacilityService {
   private readonly logger = new Logger(FacilityService.name);
@@ -76,11 +81,51 @@ export class FacilityService {
         "quality_check",
         "rework_required",
         "ready_for_delivery",
+        "delivery_assigned",
+        "delivery_failed",
       ])
       .order("updated_at", { ascending: false })
       .limit(100);
     if (error) throw new BadRequestException("Facility dashboard unavailable");
     const queue = orders ?? [];
+    const readyOrderIds = queue
+      .filter((order) =>
+        ["ready_for_delivery", "delivery_assigned", "delivery_failed"].includes(
+          order.current_status,
+        ),
+      )
+      .map((order) => order.id);
+    const assignmentByOrder = new Map<string, any>();
+    if (readyOrderIds.length) {
+      const { data: assignments, error: assignmentError } = await this.db()
+        .from("driver_assignments")
+        .select(
+          "id,order_id,driver_id,status,assigned_at,rejection_reason",
+        )
+        .eq("assignment_type", "delivery")
+        .in("order_id", readyOrderIds)
+        .order("assigned_at", { ascending: false });
+      if (assignmentError) {
+        throw new BadRequestException("Facility delivery assignments unavailable");
+      }
+      for (const assignment of assignments ?? []) {
+        if (!assignmentByOrder.has(assignment.order_id)) {
+          assignmentByOrder.set(assignment.order_id, assignment);
+        }
+      }
+    }
+    const dashboardOrders = queue.map((order) => ({
+      ...order,
+      deliveryAssignment: assignmentByOrder.get(order.id)
+        ? {
+            id: assignmentByOrder.get(order.id).id,
+            driverId: assignmentByOrder.get(order.id).driver_id,
+            status: assignmentByOrder.get(order.id).status,
+            rejectionReason:
+              assignmentByOrder.get(order.id).rejection_reason ?? null,
+          }
+        : null,
+    }));
     return {
       facility: {
         id: access.facility.id,
@@ -102,12 +147,125 @@ export class FacilityService {
             order.current_status,
           ),
         ).length,
-        ready: queue.filter(
-          (order) => order.current_status === "ready_for_delivery",
+        ready: queue.filter((order) =>
+          ["ready_for_delivery", "delivery_assigned", "delivery_failed"].includes(
+            order.current_status,
+          ),
         ).length,
       },
-      orders: queue,
+      orders: dashboardOrders,
     };
+  }
+
+  async availableDeliveryDrivers(profileId: string, orderId: string) {
+    const access = await this.requireFacilityEmployee(profileId);
+    const order = await this.requireOrder(orderId);
+    this.ensureFacilityMatch(access, order.facility_id);
+    if (order.current_status !== "delivery_failed") {
+      throw new ConflictException(
+        "A rejected delivery assignment is required before reassignment",
+      );
+    }
+    const { data: history, error: historyError } = await this.db()
+      .from("driver_assignments")
+      .select("driver_id,status")
+      .eq("order_id", orderId)
+      .eq("assignment_type", "delivery");
+    if (historyError) {
+      throw new BadRequestException("Unable to load assignment history");
+    }
+    const excluded = new Set((history ?? []).map((row) => row.driver_id));
+    const { data: candidates, error: candidateError } = await this.db().rpc(
+      "find_driver_assignment_candidates",
+      { p_order_id: orderId, p_assignment_type: "delivery", p_limit: 50 },
+    );
+    if (candidateError) {
+      throw new BadRequestException("Unable to load available drivers");
+    }
+    const candidateRows = (candidates ?? []).filter(
+      (row: DeliveryDriverCandidate) => !excluded.has(row.driver_id),
+    );
+    const driverIds = candidateRows.map(
+      (row: DeliveryDriverCandidate) => row.driver_id,
+    );
+    if (!driverIds.length) return { drivers: [] };
+    const { data: drivers, error: driverError } = await this.db()
+      .from("drivers")
+      .select("id,profile_id,is_active,is_available,max_concurrent_jobs")
+      .in("id", driverIds);
+    if (driverError) {
+      throw new BadRequestException("Unable to load available drivers");
+    }
+    const eligible = (drivers ?? []).filter(
+      (driver) => driver.is_active && driver.is_available,
+    );
+    const profileIds = eligible.map((driver) => driver.profile_id);
+    const { data: profiles, error: profileError } = profileIds.length
+      ? await this.db()
+          .from("profiles")
+          .select("id,full_name")
+          .in("id", profileIds)
+      : { data: [], error: null };
+    if (profileError) {
+      throw new BadRequestException("Unable to load available drivers");
+    }
+    const names = new Map((profiles ?? []).map((row) => [row.id, row.full_name]));
+    const byId = new Map(eligible.map((driver) => [driver.id, driver]));
+    return {
+      drivers: candidateRows
+        .filter((candidate: DeliveryDriverCandidate) => {
+          const driver = byId.get(candidate.driver_id);
+          return (
+            driver &&
+            Number(candidate.active_workload ?? 0) <
+              Number(driver.max_concurrent_jobs ?? 0)
+          );
+        })
+        .map((candidate: DeliveryDriverCandidate) => {
+          const driver = byId.get(candidate.driver_id)!;
+          return {
+            id: driver.id,
+            name: names.get(driver.profile_id) || "Driver",
+            activeJobs: Number(candidate.active_workload ?? 0),
+          };
+        }),
+    };
+  }
+
+  async reassignDelivery(
+    profileId: string,
+    orderId: string,
+    newDriverId: string,
+  ) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(newDriverId)) {
+      throw new BadRequestException("A valid replacement Driver is required");
+    }
+    const access = await this.requireFacilityEmployee(profileId);
+    const order = await this.requireOrder(orderId);
+    this.ensureFacilityMatch(access, order.facility_id);
+    if (order.current_status !== "delivery_failed") {
+      throw new ConflictException(
+        "A rejected delivery assignment is required before reassignment",
+      );
+    }
+    const { data, error } = await this.db().rpc(
+      "facility_reassign_delivery_atomic",
+      {
+        p_profile_id: profileId,
+        p_order_id: orderId,
+        p_new_driver_id: newDriverId,
+      },
+    );
+    if (error?.code === "42501") {
+      throw new ForbiddenException(error.message);
+    }
+    if (error?.code === "P0002") {
+      throw new NotFoundException(error.message);
+    }
+    if (error || !data?.assignment) {
+      throw new ConflictException(error?.message ?? "Unable to reassign delivery");
+    }
+    return data;
   }
 
   private async requireOrder(orderId: string) {

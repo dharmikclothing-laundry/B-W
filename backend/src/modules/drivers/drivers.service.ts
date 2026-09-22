@@ -224,11 +224,14 @@ export class DriversService {
       })
       .filter((job): job is NonNullable<typeof job> => job !== null)
       .sort((a, b) => a.assignedAt.localeCompare(b.assignedAt) * -1);
+    const activeJobs = jobs.filter(
+      (job) => job.assignmentStatus !== "completed",
+    );
     return {
       date: today,
       summary: {
-        pickups: jobs.filter((job) => job.type === "pickup").length,
-        deliveries: jobs.filter((job) => job.type === "delivery").length,
+        pickups: activeJobs.filter((job) => job.type === "pickup").length,
+        deliveries: activeJobs.filter((job) => job.type === "delivery").length,
         pending: jobs.filter((job) => job.assignmentStatus === "assigned")
           .length,
         inProgress: jobs.filter((job) =>
@@ -237,8 +240,8 @@ export class DriversService {
         completed: jobs.filter((job) => job.assignmentStatus === "completed")
           .length,
       },
-      pickups: jobs.filter((job) => job.type === "pickup"),
-      deliveries: jobs.filter((job) => job.type === "delivery"),
+      pickups: activeJobs.filter((job) => job.type === "pickup"),
+      deliveries: activeJobs.filter((job) => job.type === "delivery"),
     };
   }
 

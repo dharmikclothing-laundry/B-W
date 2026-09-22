@@ -10,9 +10,18 @@ import {
   View,
 } from 'react-native';
 import {
+  AvailableDeliveryDriver,
   FacilityDashboard,
+  getAvailableDeliveryDrivers,
   getFacilityDashboard,
+  reassignFacilityDelivery,
 } from '../services/facilityDashboardApi';
+
+const READY_STATUSES = [
+  'ready_for_delivery',
+  'delivery_assigned',
+  'delivery_failed',
+];
 
 type Props = {
   accessToken: string;
@@ -34,6 +43,12 @@ export default function FacilityDashboardScreen({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [message, setMessage] = useState('');
+  const [driverOrderId, setDriverOrderId] = useState<string | null>(null);
+  const [drivers, setDrivers] = useState<AvailableDeliveryDriver[]>([]);
+  const [loadingDrivers, setLoadingDrivers] = useState(false);
+  const [reassigning, setReassigning] = useState(false);
   const load = useCallback(
     async (refresh = false) => {
       if (refresh) setRefreshing(true);
@@ -58,6 +73,47 @@ export default function FacilityDashboardScreen({
   useEffect(() => {
     load();
   }, [load]);
+
+  const showDrivers = async (orderId: string) => {
+    setDriverOrderId(orderId);
+    setDrivers([]);
+    setLoadingDrivers(true);
+    setActionError('');
+    setMessage('');
+    try {
+      const result = await getAvailableDeliveryDrivers(accessToken, orderId);
+      setDrivers(result.drivers);
+    } catch (cause) {
+      setActionError(
+        cause instanceof Error
+          ? cause.message
+          : 'Available Drivers unavailable.',
+      );
+    } finally {
+      setLoadingDrivers(false);
+    }
+  };
+
+  const reassign = async (orderId: string, driver: AvailableDeliveryDriver) => {
+    if (reassigning) return;
+    setReassigning(true);
+    setActionError('');
+    setMessage('');
+    try {
+      await reassignFacilityDelivery(accessToken, orderId, driver.id);
+      setDriverOrderId(null);
+      setDrivers([]);
+      setMessage(`Delivery assigned to ${driver.name}. Waiting for acceptance.`);
+      await load(true);
+      setTab('ready');
+    } catch (cause) {
+      setActionError(
+        cause instanceof Error ? cause.message : 'Unable to reassign delivery.',
+      );
+    } finally {
+      setReassigning(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.page}>
@@ -101,6 +157,12 @@ export default function FacilityDashboardScreen({
             {error}
           </Text>
         ) : null}
+        {actionError ? (
+          <Text accessibilityRole="alert" style={styles.error}>
+            {actionError}
+          </Text>
+        ) : null}
+        {message ? <Text accessibilityRole="alert">{message}</Text> : null}
         {error ? (
           <TouchableOpacity
             accessibilityRole="button"
@@ -186,30 +248,84 @@ export default function FacilityDashboardScreen({
                   ? ['processing', 'quality_check', 'rework_required'].includes(
                       order.current_status,
                     )
-                  : order.current_status === 'ready_for_delivery',
+                  : READY_STATUSES.includes(order.current_status),
               )
               .map(order => (
-                <TouchableOpacity
-                  key={order.id}
-                  style={styles.card}
-                  accessibilityRole="button"
-                  onPress={() => onOrder(order.id)}
-                >
-                  <View style={styles.orderTop}>
-                    <Text style={styles.orderNumber}>{order.order_number}</Text>
-                    <Text style={styles.status}>
-                      {order.current_status.replace(/_/g, ' ')}
+                <View key={order.id} style={styles.card}>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    onPress={() => onOrder(order.id)}
+                  >
+                    <View style={styles.orderTop}>
+                      <Text style={styles.orderNumber}>{order.order_number}</Text>
+                      <Text style={styles.status}>
+                        {order.current_status.replace(/_/g, ' ')}
+                      </Text>
+                    </View>
+                    <Text style={styles.link}>
+                      {tab === 'received'
+                        ? 'Verify garments'
+                        : tab === 'processing'
+                        ? 'Continue processing'
+                        : 'Review handoff'}{' '}
+                      →
                     </Text>
-                  </View>
-                  <Text style={styles.link}>
-                    {tab === 'received'
-                      ? 'Verify garments'
-                      : tab === 'processing'
-                      ? 'Continue processing'
-                      : 'Review handoff'}{' '}
-                    →
-                  </Text>
-                </TouchableOpacity>
+                  </TouchableOpacity>
+                  {tab === 'ready' &&
+                  order.current_status === 'delivery_assigned' ? (
+                    <Text style={styles.muted}>
+                      Waiting for Driver acceptance.
+                    </Text>
+                  ) : null}
+                  {tab === 'ready' &&
+                  order.current_status === 'ready_for_delivery' ? (
+                    <Text style={styles.muted}>Ready for Driver assignment.</Text>
+                  ) : null}
+                  {tab === 'ready' &&
+                  order.current_status === 'delivery_failed' ? (
+                    <>
+                      <Text style={styles.rejected}>
+                        Driver rejected the delivery
+                        {order.deliveryAssignment?.rejectionReason
+                          ? `: ${order.deliveryAssignment.rejectionReason}`
+                          : '.'}
+                      </Text>
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        style={styles.reassignButton}
+                        disabled={reassigning}
+                        onPress={() => showDrivers(order.id)}
+                      >
+                        <Text style={styles.reassignText}>Reassign Driver</Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : null}
+                  {driverOrderId === order.id ? (
+                    <View style={styles.driverList}>
+                      <Text style={styles.driverListTitle}>Available Drivers</Text>
+                      {loadingDrivers ? (
+                        <ActivityIndicator accessibilityLabel="Loading available Drivers" />
+                      ) : null}
+                      {!loadingDrivers && !drivers.length && !actionError ? (
+                        <Text style={styles.muted}>No other Drivers are available.</Text>
+                      ) : null}
+                      {drivers.map(driver => (
+                        <TouchableOpacity
+                          accessibilityRole="button"
+                          key={driver.id}
+                          disabled={reassigning}
+                          style={styles.driverOption}
+                          onPress={() => reassign(order.id, driver)}
+                        >
+                          <Text style={styles.driverName}>{driver.name}</Text>
+                          <Text style={styles.muted}>
+                            {driver.activeJobs} active jobs
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  ) : null}
+                </View>
               ))}
             {!dashboard.orders.filter(order =>
               tab === 'received'
@@ -222,7 +338,7 @@ export default function FacilityDashboardScreen({
                 ? ['processing', 'quality_check', 'rework_required'].includes(
                     order.current_status,
                   )
-                : order.current_status === 'ready_for_delivery',
+                : READY_STATUSES.includes(order.current_status),
             ).length ? (
               <View style={styles.empty}>
                 <Text style={styles.emptyTitle}>No {tab} orders</Text>
@@ -322,4 +438,23 @@ const styles = StyleSheet.create({
   logout: { alignItems: 'center', padding: 14 },
   logoutText: { fontWeight: '800', color: '#8C2D26' },
   error: { color: '#9A241E' },
+  rejected: { color: '#982C23', fontWeight: '700' },
+  reassignButton: {
+    minHeight: 44,
+    borderRadius: 12,
+    backgroundColor: '#151515',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reassignText: { color: '#fff', fontWeight: '900' },
+  driverList: { gap: 8, paddingTop: 4 },
+  driverListTitle: { fontWeight: '900', fontSize: 16 },
+  driverOption: {
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D8D3CA',
+    backgroundColor: '#FAF9F6',
+  },
+  driverName: { fontWeight: '900' },
 });

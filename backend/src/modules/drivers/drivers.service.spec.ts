@@ -202,6 +202,21 @@ describe('Driver dashboard assignment isolation', () => {
     expect(result.pickups[0].orderStatus).toBe('in_transit_to_facility');
   });
 
+  it('counts completed work but removes it from pickup and delivery queues', async () => {
+    const completed = {...own, status: 'completed', completed_at: new Date().toISOString()};
+    const f = fixture({
+      drivers: [{id: 'driver-own', is_active: true}],
+      driver_assignments: [[], [completed], [completed]],
+      orders: [[{id: 'order-own', order_number: 'BW-COMPLETE', current_status: 'claim_period_active',
+        pickup_address_id: null, delivery_address_id: null, facility_id: null}]],
+    });
+    const result = await f.service.dashboard('profile-own');
+    expect(result.summary.completed).toBe(1);
+    expect(result.summary.pickups).toBe(0);
+    expect(result.pickups).toEqual([]);
+    expect(result.deliveries).toEqual([]);
+  });
+
   it('provides the active handoff code only to the owning Driver after pickup', async () => {
     const f = fixture({
       drivers: [{id: 'driver-own', is_active: true}],

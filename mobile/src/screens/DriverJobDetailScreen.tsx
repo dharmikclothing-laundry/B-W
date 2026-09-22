@@ -437,19 +437,23 @@ export default function DriverJobDetailScreen({
             <Text style={styles.orderStatus}>
               {job.orderStatus.replace(/_/g, ' ')}
             </Text>
+            <Text style={styles.heading}>Order ID</Text>
+            <Text>{job.orderNumber}</Text>
             <Text style={styles.heading}>
               {job.type === 'pickup' ? 'Pickup address' : 'Delivery address'}
             </Text>
             <Text>{formatDriverAddress(job.address)}</Text>
+            <Text style={styles.heading}>Assigned facility</Text>
             {job.facility ? (
               <>
-                <Text style={styles.heading}>Assigned facility</Text>
                 <Text>
                   {job.facility.name}
                   {job.facility.address ? ` · ${job.facility.address}` : ''}
                 </Text>
               </>
-            ) : null}
+            ) : (
+              <Text>Facility unavailable</Text>
+            )}
             {job.customer ? (
               <>
                 <Text style={styles.heading}>Customer contact</Text>

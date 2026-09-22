@@ -31,6 +31,23 @@ export class FacilityController {
     return this.facility.dashboard(req.user.id);
   }
 
+  @Get("orders/:orderId/available-delivery-drivers")
+  availableDeliveryDrivers(
+    @Req() req: any,
+    @Param("orderId", ParseUUIDPipe) orderId: string,
+  ) {
+    return this.facility.availableDeliveryDrivers(req.user.id, orderId);
+  }
+
+  @Post("orders/:orderId/reassign-delivery")
+  reassignDelivery(
+    @Req() req: any,
+    @Param("orderId", ParseUUIDPipe) orderId: string,
+    @Body() body: { driverId: string },
+  ) {
+    return this.facility.reassignDelivery(req.user.id, orderId, body.driverId);
+  }
+
   @Post("receive/qr")
   receive(
     @Req() req: any,

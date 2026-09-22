@@ -22,9 +22,11 @@ beforeEach(() => {jest.clearAllMocks();});
 test('shows counts, pickup and delivery queues and opens only selected job', async () => {
   load.mockResolvedValue({date: '2026-09-18', summary: {pickups: 1, deliveries: 1, pending: 1, inProgress: 1, completed: 0},
     pickups: [{id: 'pickup-id', orderId: 'order-pickup', type: 'pickup', assignmentStatus: 'assigned',
-      assignedAt: '2026-09-18T09:00:00Z', address: null}],
+      orderNumber: 'BW-PICKUP', assignedAt: '2026-09-18T09:00:00Z', address: null,
+      facility: {name: 'Banjara Hills Care Centre'}}],
     deliveries: [{id: 'delivery-id', orderId: 'order-delivery', type: 'delivery', assignmentStatus: 'accepted',
-      assignedAt: '2026-09-18T10:00:00Z', address: null}],
+      orderNumber: 'BW-DELIVERY', assignedAt: '2026-09-18T10:00:00Z', address: null,
+      facility: {name: 'Banjara Hills Care Centre'}}],
   });
   const onJob = jest.fn();
   const onNotifications = jest.fn();
@@ -33,6 +35,8 @@ test('shows counts, pickup and delivery queues and opens only selected job', asy
   expect(view.getByText('Deliveries 1')).toBeTruthy();
   expect(view.getByText('Pickup queue')).toBeTruthy();
   expect(view.getByText('Delivery queue')).toBeTruthy();
+  expect(view.getByText('Order ID: BW-PICKUP')).toBeTruthy();
+  expect(view.getAllByText('Facility: Banjara Hills Care Centre')).toHaveLength(2);
   await fireEvent.press(view.getByText('Review assignment →'));
   expect(onJob).toHaveBeenCalledWith('pickup-id');
   await fireEvent.press(view.getByLabelText('Driver notifications'));
@@ -44,6 +48,19 @@ test('shows empty queues when no jobs are assigned', async () => {
   const view = await render(<DriverDashboardScreen accessToken="token" onJob={jest.fn()} onNotifications={jest.fn()} onProfile={jest.fn()} onLogout={jest.fn()} />);
   await waitFor(() => expect(view.getByText('No jobs assigned right now')).toBeTruthy());
   await waitFor(() => expect(view.getByText('No pickup queue assigned.')).toBeTruthy());
+  expect(view.getByText('No delivery queue assigned.')).toBeTruthy();
+});
+
+test('does not render completed pickup or delivery jobs', async () => {
+  const completedJob = {id: 'completed-id', orderId: 'completed-order', type: 'delivery',
+    assignmentStatus: 'completed', orderNumber: 'BW-COMPLETE', assignedAt: '2026-09-18T08:00:00Z',
+    address: null, facility: {name: 'Banjara Hills Care Centre'}};
+  load.mockResolvedValue({date: '2026-09-18', summary: {pickups: 0, deliveries: 0, pending: 0,
+    inProgress: 0, completed: 1}, pickups: [], deliveries: [completedJob]});
+  const view = await render(<DriverDashboardScreen accessToken="token" onJob={jest.fn()}
+    onNotifications={jest.fn()} onProfile={jest.fn()} onLogout={jest.fn()} />);
+  await waitFor(() => expect(view.getByText('Completed')).toBeTruthy());
+  expect(view.queryByText('Order ID: BW-COMPLETE')).toBeNull();
   expect(view.getByText('No delivery queue assigned.')).toBeTruthy();
 });
 

@@ -476,6 +476,10 @@ test('only a picked-up job can start facility transit and show its scoped handof
   await waitFor(() =>
     expect(view.getByText('Start facility transit')).toBeTruthy(),
   );
+  expect(view.getByText('Order ID')).toBeTruthy();
+  expect(view.getByText('BW-20260921-ABC12345')).toBeTruthy();
+  expect(view.getByText('Assigned facility')).toBeTruthy();
+  expect(view.getByText('Local Facility · 2 Work Road')).toBeTruthy();
   fireEvent.press(view.getByText('Start facility transit'));
   await waitFor(() =>
     expect(view.getByText('Show facility handoff QR')).toBeTruthy(),

@@ -4,9 +4,26 @@ export type FacilityDashboard = {
   facility: {id: string; name: string; address: string | null};
   role: 'manager' | 'facility_employee';
   summary: {incoming: number; received: number; processing: number; ready: number};
-  orders: Array<{id: string; order_number: string; current_status: string; created_at: string; updated_at: string}>;
+  orders: Array<{id: string; order_number: string; current_status: string; created_at: string; updated_at: string;
+    deliveryAssignment: {id: string; driverId: string; status: string; rejectionReason: string | null} | null}>;
 };
+
+export type AvailableDeliveryDriver = {id: string; name: string; activeJobs: number};
 
 export function getFacilityDashboard(accessToken: string) {
   return apiRequest<FacilityDashboard>('/facility/me/dashboard', {accessToken});
+}
+
+export function getAvailableDeliveryDrivers(accessToken: string, orderId: string) {
+  return apiRequest<{drivers: AvailableDeliveryDriver[]}>(
+    `/facility/orders/${encodeURIComponent(orderId)}/available-delivery-drivers`,
+    {accessToken},
+  );
+}
+
+export function reassignFacilityDelivery(accessToken: string, orderId: string, driverId: string) {
+  return apiRequest(
+    `/facility/orders/${encodeURIComponent(orderId)}/reassign-delivery`,
+    {accessToken, method: 'POST', body: {driverId}},
+  );
 }
