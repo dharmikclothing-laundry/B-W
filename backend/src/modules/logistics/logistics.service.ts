@@ -3,13 +3,25 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 
 import { SupabaseService } from "../supabase/supabase.service";
 import { MapsService } from "../maps/maps.service";
+import { NotificationDispatcher } from "../notifications/notification-dispatcher.service";
 
 type AssignmentType = "pickup" | "delivery";
+
+function indiaDayWindow(now = new Date()) {
+  const date = new Date(now.getTime() + 330 * 60_000).toISOString().slice(0, 10);
+  const start = new Date(`${date}T00:00:00+05:30`);
+  return {
+    start: start.toISOString(),
+    end: new Date(start.getTime() + 86_400_000).toISOString(),
+  };
+}
 
 const TRACKING_ASSIGNMENT_STATUSES = new Set([
   "pickup_assigned",
@@ -31,9 +43,12 @@ const LIVE_LOCATION_STATUSES = new Set([
 
 @Injectable()
 export class LogisticsService {
+  private readonly logger = new Logger(LogisticsService.name);
+
   constructor(
     private readonly supabase: SupabaseService,
     private readonly maps: MapsService,
+    @Optional() private readonly notifications?: NotificationDispatcher,
   ) {}
 
   private db() {
@@ -306,7 +321,7 @@ export class LogisticsService {
 
     const { data: order, error: orderError } = await this.db()
       .from("orders")
-      .select("id,current_status")
+      .select("id,current_status,delivery_scheduled_at")
       .eq("id", orderId)
       .maybeSingle();
 
@@ -323,6 +338,14 @@ export class LogisticsService {
       throw new ConflictException(
         `${assignmentType} assignment is not allowed while order is ${order.current_status}`,
       );
+    }
+
+    if (
+      assignmentType === "delivery" &&
+      order.delivery_scheduled_at &&
+      new Date(order.delivery_scheduled_at).getTime() > Date.now()
+    ) {
+      throw new ConflictException("Delivery is scheduled for tomorrow");
     }
 
     const { data: existing, error: existingError } = await this.db()
@@ -456,7 +479,125 @@ export class LogisticsService {
       );
     }
 
-    return data.assignment;
+    if (accept) {
+      return { assignment: data.assignment, reassigned: false };
+    }
+
+    let replacement: Awaited<ReturnType<LogisticsService["assignBestDriver"]>> | null = null;
+    try {
+      replacement = await this.assignBestDriver(
+        data.orderId,
+        data.assignment.assignment_type as AssignmentType,
+      );
+    } catch (cause) {
+      this.logger.warn(
+        `Automatic reassignment is pending for order ${data.orderId}: ${cause instanceof Error ? cause.message : "unknown error"}`,
+      );
+    }
+
+    return {
+      assignment: data.assignment,
+      reassigned: Boolean(replacement),
+      replacementAssignmentId: replacement?.assignment?.id ?? null,
+    };
+  }
+
+  async reportCustomerUnavailable(
+    profileId: string,
+    assignmentId: string,
+    outcome: "customer_not_home" | "customer_not_answering",
+  ) {
+    const driverId = await this.driverId(profileId);
+    const { data, error } = await this.db().rpc(
+      "resolve_driver_customer_unavailable_atomic",
+      {
+        p_assignment_id: assignmentId,
+        p_driver_id: driverId,
+        p_outcome: outcome,
+      },
+    );
+
+    if (error?.code === "P0002") {
+      throw new NotFoundException("Assignment not found");
+    }
+    if (error || !data) {
+      throw new ConflictException(
+        error?.message ?? "Unable to record customer availability",
+      );
+    }
+
+    if (data.notificationId && this.notifications) {
+      void this.notifications
+        .dispatchPersisted(data.notificationId)
+        .catch((cause) =>
+          this.logger.warn(
+            `Customer notification ${data.notificationId} remains queued: ${cause instanceof Error ? cause.message : "dispatch failed"}`,
+          ),
+        );
+    }
+    return data;
+  }
+
+  async assignPickupIfDueToday(orderId: string, now = new Date()) {
+    const { data: order, error } = await this.db()
+      .from("orders")
+      .select("id,current_status,pickup_scheduled_at")
+      .eq("id", orderId)
+      .maybeSingle();
+    if (error || !order) throw new NotFoundException("Order not found");
+    if (order.current_status !== "confirmed") {
+      return { assigned: false, reason: "order_not_confirmed" };
+    }
+    const { start, end } = indiaDayWindow(now);
+    if (
+      !order.pickup_scheduled_at ||
+      order.pickup_scheduled_at < start ||
+      order.pickup_scheduled_at >= end
+    ) {
+      return { assigned: false, reason: "future_pickup" };
+    }
+    return { assigned: true, ...(await this.assignBestDriver(orderId, "pickup")) };
+  }
+
+  async assignDueJobs(now = new Date()) {
+    const { start, end } = indiaDayWindow(now);
+    const [pickups, deliveries] = await Promise.all([
+      this.db()
+        .from("orders")
+        .select("id")
+        .eq("current_status", "confirmed")
+        .gte("pickup_scheduled_at", start)
+        .lt("pickup_scheduled_at", end)
+        .order("pickup_scheduled_at", { ascending: true }),
+      this.db()
+        .from("orders")
+        .select("id")
+        .eq("current_status", "delivery_failed")
+        .lte("delivery_scheduled_at", now.toISOString())
+        .order("delivery_scheduled_at", { ascending: true }),
+    ]);
+    if (pickups.error || deliveries.error) {
+      throw new BadRequestException("Unable to load jobs due for assignment");
+    }
+
+    const results = [] as { orderId: string; type: AssignmentType; assigned: boolean }[];
+    for (const row of pickups.data ?? []) {
+      try {
+        await this.assignBestDriver(row.id, "pickup");
+        results.push({ orderId: row.id, type: "pickup", assigned: true });
+      } catch {
+        results.push({ orderId: row.id, type: "pickup", assigned: false });
+      }
+    }
+    for (const row of deliveries.data ?? []) {
+      try {
+        await this.assignBestDriver(row.id, "delivery");
+        results.push({ orderId: row.id, type: "delivery", assigned: true });
+      } catch {
+        results.push({ orderId: row.id, type: "delivery", assigned: false });
+      }
+    }
+    return results;
   }
 
   async reassignDriver(

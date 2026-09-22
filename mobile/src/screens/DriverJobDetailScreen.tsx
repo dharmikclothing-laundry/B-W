@@ -28,6 +28,7 @@ import {
   getDriverJob,
   markDriverArrived,
   rejectDriverJob,
+  reportCustomerUnavailable,
   startDriverNavigation,
   verifyDriverPickupOtp,
 } from '../services/driverAssignmentsApi';
@@ -379,11 +380,14 @@ export default function DriverJobDetailScreen({
     setError('');
     setMessage('');
     try {
-      if (accept) await acceptDriverJob(accessToken, assignmentId);
-      else await rejectDriverJob(accessToken, assignmentId, reason);
-      setMessage(
-        accept ? 'Job accepted.' : 'Job rejected. Admin can reassign it.',
-      );
+      if (accept) {
+        await acceptDriverJob(accessToken, assignmentId);
+      } else {
+        await rejectDriverJob(accessToken, assignmentId, reason);
+        onBack();
+        return;
+      }
+      setMessage('Job accepted.');
       setReason('');
       await load();
     } catch (cause) {
@@ -392,6 +396,32 @@ export default function DriverJobDetailScreen({
         cause instanceof Error
           ? cause.message
           : 'Unable to update job. Refresh and try again.',
+      );
+    } finally {
+      actionLock.current = false;
+      setBusy(false);
+    }
+  };
+  const customerUnavailable = async (
+    outcome: 'customer_not_home' | 'customer_not_answering',
+  ) => {
+    if (actionLock.current) return;
+    actionLock.current = true;
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      await reportCustomerUnavailable(
+        accessToken,
+        assignmentId,
+        outcome,
+      );
+      onBack();
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : 'Unable to record customer availability.',
       );
     } finally {
       actionLock.current = false;
@@ -606,6 +636,34 @@ export default function DriverJobDetailScreen({
                     Verify OTP and complete pickup
                   </Text>
                 </TouchableOpacity>
+                <View style={styles.outcomePanel}>
+                  <Text style={styles.heading}>Customer unavailable?</Text>
+                  <Text>
+                    Use these options only after reaching the pickup address.
+                    The pickup order will be cancelled and the customer will be
+                    notified.
+                  </Text>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    style={styles.dangerButton}
+                    disabled={busy}
+                    onPress={() => customerUnavailable('customer_not_home')}
+                  >
+                    <Text style={styles.dangerText}>Customer not at home</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    style={styles.dangerButton}
+                    disabled={busy}
+                    onPress={() =>
+                      customerUnavailable('customer_not_answering')
+                    }
+                  >
+                    <Text style={styles.dangerText}>
+                      Customer not answering calls
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             ) : null}
             {job.type === 'delivery' &&
@@ -667,6 +725,36 @@ export default function DriverJobDetailScreen({
                     Verify OTP and complete delivery
                   </Text>
                 </TouchableOpacity>
+                <View style={styles.outcomePanel}>
+                  <Text style={styles.heading}>Customer unavailable?</Text>
+                  <Text>
+                    Use these options only after reaching the delivery address.
+                    The order will remain active, delivery will move to tomorrow,
+                    and the customer will be notified.
+                  </Text>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    style={styles.secondaryButton}
+                    disabled={busy}
+                    onPress={() => customerUnavailable('customer_not_home')}
+                  >
+                    <Text style={styles.secondaryText}>
+                      Customer not at home
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    style={styles.secondaryButton}
+                    disabled={busy}
+                    onPress={() =>
+                      customerUnavailable('customer_not_answering')
+                    }
+                  >
+                    <Text style={styles.secondaryText}>
+                      Customer not answering calls
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             ) : null}
             {job.type === 'delivery' &&
@@ -792,6 +880,12 @@ const styles = StyleSheet.create({
   heading: { fontSize: 18, fontWeight: '900' },
   link: { fontWeight: '800' },
   error: { color: '#9A241E' },
+  outcomePanel: {
+    borderTopWidth: 1,
+    borderTopColor: '#E2DED6',
+    paddingTop: 14,
+    gap: 10,
+  },
   card: {
     borderWidth: 1,
     borderColor: '#E2DED6',

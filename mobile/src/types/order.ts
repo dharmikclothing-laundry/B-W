@@ -57,6 +57,7 @@ export type CustomerOrder = {
 
   pickup_scheduled_at: string | null;
   pickup_slot_label: string | null;
+  delivery_scheduled_at?: string | null;
 
   subtotal: number | string;
   discount_amount: number | string;

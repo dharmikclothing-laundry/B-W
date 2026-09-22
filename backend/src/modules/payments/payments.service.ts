@@ -70,7 +70,7 @@ export class PaymentsService {
   private async triggerPickupAssignment(orderId: string) {
     if (!this.logistics) return;
     try {
-      await this.logistics.assignBestDriver(orderId, "pickup");
+      await this.logistics.assignPickupIfDueToday(orderId);
     } catch (error) {
       this.logger.warn(
         `Automatic pickup assignment failed for order ${orderId}: ${error instanceof Error ? error.message : "unknown error"}`,

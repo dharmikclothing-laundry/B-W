@@ -12,6 +12,7 @@ import {
 
 import { LogisticsService } from "./logistics.service";
 import { UpdateDriverLocationDto } from "./dto/update-driver-location.dto";
+import { ReportCustomerUnavailableDto } from "./dto/report-customer-unavailable.dto";
 
 @Controller()
 export class LogisticsController {
@@ -111,6 +112,19 @@ export class LogisticsController {
     id: string,
   ) {
     return this.logistics.arrive(req.user.id, id);
+  }
+
+  @Post("driver-assignments/:assignmentId/customer-unavailable")
+  customerUnavailable(
+    @Req() req: any,
+    @Param("assignmentId", ParseUUIDPipe) id: string,
+    @Body() body: ReportCustomerUnavailableDto,
+  ) {
+    return this.logistics.reportCustomerUnavailable(
+      req.user.id,
+      id,
+      body.outcome,
+    );
   }
 
   @Post("driver-assignments/:assignmentId/facility-transit")

@@ -145,7 +145,7 @@ export class DriversService {
     const { data: orders, error: ordersError } = await this.supabase.admin
       .from("orders")
       .select(
-        "id,order_number,current_status,pickup_scheduled_at,pickup_slot_label,pickup_address_id,delivery_address_id,facility_id",
+        "id,order_number,current_status,pickup_scheduled_at,pickup_slot_label,delivery_scheduled_at,pickup_address_id,delivery_address_id,facility_id",
       )
       .in("id", orderIds);
     if (ordersError)
@@ -200,6 +200,14 @@ export class DriversService {
           )
         )
           return null;
+        if (
+          assignment.assignment_type === "pickup" &&
+          assignment.status === "assigned" &&
+          (!order.pickup_scheduled_at ||
+            order.pickup_scheduled_at < start ||
+            order.pickup_scheduled_at >= end)
+        )
+          return null;
         const addressId =
           assignment.assignment_type === "pickup"
             ? order.pickup_address_id
@@ -216,17 +224,27 @@ export class DriversService {
           completedAt: assignment.completed_at,
           pickupScheduledAt: order.pickup_scheduled_at,
           pickupSlotLabel: order.pickup_slot_label,
+          deliveryScheduledAt: order.delivery_scheduled_at,
           address: addressId ? (addresses.get(addressId) ?? null) : null,
           facility: order.facility_id
             ? (facilities.get(order.facility_id) ?? null)
             : null,
         };
       })
-      .filter((job): job is NonNullable<typeof job> => job !== null)
-      .sort((a, b) => a.assignedAt.localeCompare(b.assignedAt) * -1);
+      .filter((job): job is NonNullable<typeof job> => job !== null);
     const activeJobs = jobs.filter(
       (job) => job.assignmentStatus !== "completed",
     );
+    const pickups = activeJobs
+      .filter((job) => job.type === "pickup")
+      .sort((a, b) =>
+        (a.pickupScheduledAt ?? a.assignedAt).localeCompare(
+          b.pickupScheduledAt ?? b.assignedAt,
+        ),
+      );
+    const deliveries = activeJobs
+      .filter((job) => job.type === "delivery")
+      .sort((a, b) => a.assignedAt.localeCompare(b.assignedAt));
     return {
       date: today,
       summary: {
@@ -240,8 +258,8 @@ export class DriversService {
         completed: jobs.filter((job) => job.assignmentStatus === "completed")
           .length,
       },
-      pickups: activeJobs.filter((job) => job.type === "pickup"),
-      deliveries: activeJobs.filter((job) => job.type === "delivery"),
+      pickups,
+      deliveries,
     };
   }
 

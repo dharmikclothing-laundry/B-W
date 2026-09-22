@@ -12,6 +12,7 @@ export type DriverJob = {
   completedAt: string | null;
   pickupScheduledAt: string | null;
   pickupSlotLabel: string | null;
+  deliveryScheduledAt?: string | null;
   address: {
     label: string | null;
     address_line1: string;
@@ -135,6 +136,25 @@ export function markDriverArrived(accessToken: string, assignmentId: string) {
       accessToken,
       method: 'POST',
     },
+  );
+}
+
+export function reportCustomerUnavailable(
+  accessToken: string,
+  assignmentId: string,
+  outcome: 'customer_not_home' | 'customer_not_answering',
+) {
+  return apiRequest<{
+    assignmentId: string;
+    orderId: string;
+    assignmentType: 'pickup' | 'delivery';
+    orderStatus: string;
+    deliveryScheduledAt?: string;
+  }>(
+    `/driver-assignments/${encodeURIComponent(
+      assignmentId,
+    )}/customer-unavailable`,
+    { accessToken, method: 'POST', body: { outcome } },
   );
 }
 

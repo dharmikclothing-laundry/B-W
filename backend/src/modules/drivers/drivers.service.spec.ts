@@ -75,12 +75,13 @@ describe('Driver dashboard assignment isolation', () => {
   });
 
   it('returns only this Driver’s jobs and never includes customer contact in queues', async () => {
+    const pickupScheduledAt = new Date().toISOString();
     const other = {...own, id: 'assignment-other', order_id: 'order-other', driver_id: 'driver-other'};
     const f = fixture({
       drivers: [{id: 'driver-own', is_active: true}],
       driver_assignments: [[own, other], [], []],
       orders: [[{id: 'order-own', current_status: 'pickup_assigned', pickup_address_id: null,
-        delivery_address_id: null, facility_id: null, pickup_scheduled_at: null, pickup_slot_label: null}]],
+        delivery_address_id: null, facility_id: null, pickup_scheduled_at: pickupScheduledAt, pickup_slot_label: null}]],
     });
     const result = await f.service.dashboard('profile-own');
     expect(result.summary.pickups).toBe(1);
@@ -92,13 +93,14 @@ describe('Driver dashboard assignment isolation', () => {
   });
 
   it('separates today’s pickup and delivery queues with status counts', async () => {
+    const pickupScheduledAt = new Date().toISOString();
     const delivery = {...own, id: 'assignment-delivery', order_id: 'order-delivery',
       assignment_type: 'delivery', status: 'accepted'};
     const f = fixture({
       drivers: [{id: 'driver-own', is_active: true}],
       driver_assignments: [[own, delivery], [], []],
       orders: [[
-        {id: 'order-own', current_status: 'pickup_assigned', pickup_address_id: null, delivery_address_id: null, facility_id: null},
+        {id: 'order-own', current_status: 'pickup_assigned', pickup_scheduled_at: pickupScheduledAt, pickup_address_id: null, delivery_address_id: null, facility_id: null},
         {id: 'order-delivery', current_status: 'delivery_accepted', pickup_address_id: null, delivery_address_id: null, facility_id: null},
       ]],
     });
@@ -106,6 +108,34 @@ describe('Driver dashboard assignment isolation', () => {
     expect(result.summary).toMatchObject({pickups: 1, deliveries: 1, pending: 1, inProgress: 1});
     expect(result.pickups.map(job => job.id)).toEqual(['assignment-own']);
     expect(result.deliveries.map(job => job.id)).toEqual(['assignment-delivery']);
+  });
+
+  it('shows only today’s offered pickups and orders them by earliest slot', async () => {
+    const indiaDate = new Date(Date.now() + 330 * 60_000)
+      .toISOString()
+      .slice(0, 10);
+    const early = new Date(`${indiaDate}T08:00:00+05:30`).toISOString();
+    const late = new Date(`${indiaDate}T14:00:00+05:30`).toISOString();
+    const tomorrow = new Date(
+      new Date(`${indiaDate}T00:00:00+05:30`).getTime() + 86_400_000,
+    ).toISOString();
+    const assignments = [
+      {...own, id: 'late', order_id: 'order-late'},
+      {...own, id: 'tomorrow', order_id: 'order-tomorrow'},
+      {...own, id: 'early', order_id: 'order-early'},
+    ];
+    const f = fixture({
+      drivers: [{id: 'driver-own', is_active: true}],
+      driver_assignments: [assignments, [], []],
+      orders: [[
+        {id: 'order-late', current_status: 'pickup_assigned', pickup_scheduled_at: late, pickup_address_id: null, delivery_address_id: null, facility_id: null},
+        {id: 'order-tomorrow', current_status: 'pickup_assigned', pickup_scheduled_at: tomorrow, pickup_address_id: null, delivery_address_id: null, facility_id: null},
+        {id: 'order-early', current_status: 'pickup_assigned', pickup_scheduled_at: early, pickup_address_id: null, delivery_address_id: null, facility_id: null},
+      ]],
+    });
+    const result = await f.service.dashboard('profile-own');
+    expect(result.pickups.map(job => job.id)).toEqual(['early', 'late']);
+    expect(result.summary.pickups).toBe(2);
   });
 
   it('rejects another Driver’s assignment before reading its order or contact', async () => {

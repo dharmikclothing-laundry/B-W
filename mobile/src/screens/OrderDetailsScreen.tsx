@@ -868,6 +868,17 @@ export default function OrderDetailsScreen({
                 '-'}
             </Text>
           </View>
+          {order.delivery_scheduled_at ? (
+            <>
+              <View style={styles.divider} />
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Delivery rescheduled</Text>
+                <Text style={styles.detailValue}>
+                  {formatDateTime(order.delivery_scheduled_at)}
+                </Text>
+              </View>
+            </>
+          ) : null}
         </View>
 
         <Text

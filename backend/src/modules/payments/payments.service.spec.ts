@@ -107,7 +107,8 @@ describe("PaymentsService", () => {
     });
 
     const logistics = {
-      assignBestDriver: jest.fn().mockResolvedValue({
+      assignPickupIfDueToday: jest.fn().mockResolvedValue({
+        assigned: true,
         assignment: { id: "pickup-1" },
       }),
     };
@@ -161,10 +162,7 @@ describe("PaymentsService", () => {
       },
       "profile-1",
     );
-    expect(logistics.assignBestDriver).toHaveBeenCalledWith(
-      "order-1",
-      "pickup",
-    );
+    expect(logistics.assignPickupIfDueToday).toHaveBeenCalledWith("order-1");
   });
 
   it("rejects a provider payment that does not match the payment order", async () => {

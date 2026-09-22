@@ -17,6 +17,7 @@ import {
   getDriverJob,
   markDriverArrived,
   rejectDriverJob,
+  reportCustomerUnavailable,
   startDriverNavigation,
   verifyDriverPickupOtp,
 } from '../services/driverAssignmentsApi';
@@ -32,6 +33,7 @@ jest.mock('../services/driverAssignmentsApi', () => ({
   rejectDriverJob: jest.fn(),
   startDriverNavigation: jest.fn(),
   markDriverArrived: jest.fn(),
+  reportCustomerUnavailable: jest.fn(),
   verifyDriverPickupOtp: jest.fn(),
   beginFacilityTransit: jest.fn(),
   getDriverHandoffQr: jest.fn(),
@@ -60,6 +62,7 @@ beforeEach(() => {
   (rejectDriverJob as jest.Mock).mockReset();
   (startDriverNavigation as jest.Mock).mockReset();
   (markDriverArrived as jest.Mock).mockReset();
+  (reportCustomerUnavailable as jest.Mock).mockReset();
   (verifyDriverPickupOtp as jest.Mock).mockReset();
   (chooseDeliveryPhoto as jest.Mock).mockReset();
   (uploadDeliveryPhoto as jest.Mock).mockReset();
@@ -85,14 +88,15 @@ const offeredJob = {
   customer: null,
 };
 
-test('requires reason before rejecting, then refreshes after successful rejection', async () => {
-  load.mockResolvedValueOnce(offeredJob).mockResolvedValueOnce(null);
+test('requires reason before rejecting, then returns to the reassigned queue', async () => {
+  load.mockResolvedValueOnce(offeredJob);
   (rejectDriverJob as jest.Mock).mockResolvedValue({});
+  const onBack = jest.fn();
   const view = await render(
     <DriverJobDetailScreen
       accessToken="token"
       assignmentId="job-1"
-      onBack={jest.fn()}
+      onBack={onBack}
     />,
   );
   await waitFor(() => expect(view.getByText('Reject job')).toBeTruthy());
@@ -112,10 +116,8 @@ test('requires reason before rejecting, then refreshes after successful rejectio
       'Cannot reach address',
     ),
   );
-  await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
-  await waitFor(() =>
-    expect(view.getByText('Job rejected. Admin can reassign it.')).toBeTruthy(),
-  );
+  await waitFor(() => expect(onBack).toHaveBeenCalledTimes(1));
+  expect(load).toHaveBeenCalledTimes(1);
 });
 
 test('accepts offered job and reloads its updated status', async () => {
@@ -527,6 +529,58 @@ const arrivedDelivery = {
   assignmentStatus: 'arrived',
   orderStatus: 'delivery_otp_pending',
 };
+
+test('pickup absence choices cancel only after arrival', async () => {
+  load.mockResolvedValue(arrivedPickup);
+  (reportCustomerUnavailable as jest.Mock).mockResolvedValue({
+    orderStatus: 'cancelled',
+  });
+  const onBack = jest.fn();
+  const view = await render(
+    <DriverJobDetailScreen
+      accessToken="token"
+      assignmentId="job-1"
+      onBack={onBack}
+    />,
+  );
+  await waitFor(() => expect(view.getByText('Customer not at home')).toBeTruthy());
+  await fireEvent.press(view.getByText('Customer not at home'));
+  await waitFor(() =>
+    expect(reportCustomerUnavailable).toHaveBeenCalledWith(
+      'token',
+      'job-1',
+      'customer_not_home',
+    ),
+  );
+  expect(onBack).toHaveBeenCalledTimes(1);
+});
+
+test('delivery absence choices defer delivery instead of cancelling', async () => {
+  load.mockResolvedValue(arrivedDelivery);
+  (reportCustomerUnavailable as jest.Mock).mockResolvedValue({
+    orderStatus: 'delivery_failed',
+  });
+  const onBack = jest.fn();
+  const view = await render(
+    <DriverJobDetailScreen
+      accessToken="token"
+      assignmentId="job-1"
+      onBack={onBack}
+    />,
+  );
+  await waitFor(() =>
+    expect(view.getByText('Customer not answering calls')).toBeTruthy(),
+  );
+  await fireEvent.press(view.getByText('Customer not answering calls'));
+  await waitFor(() =>
+    expect(reportCustomerUnavailable).toHaveBeenCalledWith(
+      'token',
+      'job-1',
+      'customer_not_answering',
+    ),
+  );
+  expect(onBack).toHaveBeenCalledTimes(1);
+});
 
 test('delivery arrival opens required OTP and photograph handover', async () => {
   load
